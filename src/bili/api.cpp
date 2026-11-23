@@ -312,12 +312,12 @@ AreaList BiliApi::fetchAreas()
 {
 	AreaList list;
 	list.result = perform(webRequest("https://api.live.bilibili.com/room/v1/Area/getList"));
-	for (const QJsonValue &groupValue : list.result.data.toArray()) {
+	for (const QJsonValue groupValue : list.result.data.toArray()) {
 		const QJsonObject groupObject = groupValue.toObject();
 		AreaGroup group;
 		group.id = static_cast<int>(jsonInt(groupObject.value(QLatin1String("id"))));
 		group.name = groupObject.value(QLatin1String("name")).toString();
-		for (const QJsonValue &areaValue : groupObject.value(QLatin1String("list")).toArray()) {
+		for (const QJsonValue areaValue : groupObject.value(QLatin1String("list")).toArray()) {
 			const QJsonObject areaObject = areaValue.toObject();
 			group.areas.append({static_cast<int>(jsonInt(areaObject.value(QLatin1String("id")))),
 					    areaObject.value(QLatin1String("name")).toString()});
@@ -459,7 +459,7 @@ DanmuInfo BiliApi::fetchDanmuInfo(qint64 roomId)
 		perform(webRequest("https://api.live.bilibili.com/xlive/web-room/v1/index/getDanmuInfo?" + query));
 	const QJsonObject data = info.result.object();
 	info.token = data.value(QLatin1String("token")).toString();
-	for (const QJsonValue &value : data.value(QLatin1String("host_list")).toArray()) {
+	for (const QJsonValue value : data.value(QLatin1String("host_list")).toArray()) {
 		const QJsonObject host = value.toObject();
 		const qint64 port = jsonInt(host.value(QLatin1String("port")));
 		if (port > 0 && port <= 65535)
