@@ -1,11 +1,8 @@
 name: Push
 run-name: ${{ github.ref_name }} push run 🚀
 on:
+  # Builds run only for release tags; pull requests and manual dispatch cover the rest.
   push:
-    branches:
-      - master
-      - main
-      - 'release/**'
     tags:
       - '*'
 permissions:
