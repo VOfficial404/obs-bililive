@@ -22,6 +22,9 @@ function(set_target_properties_plugin target)
 
   set_target_properties(${target} PROPERTIES VERSION 0 SOVERSION ${PLUGIN_VERSION})
 
+  # OBS 33+ loads <plugin>/<plugin>.dll; OBS 31-32 only know <plugin>/bin/64bit. Ship both: OBS 33 loads the
+  # new layout first and skips the legacy copy, so one package works for every supported version.
+  install(TARGETS ${target} RUNTIME DESTINATION "${target}" LIBRARY DESTINATION "${target}")
   install(TARGETS ${target} RUNTIME DESTINATION "${target}/bin/64bit" LIBRARY DESTINATION "${target}/bin/64bit")
 
   install(

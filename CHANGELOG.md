@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [0.2.0]
+
+### 新增
+
+- 弹幕悬浮窗：始终置顶、可拖动和调整大小，锁定后鼠标穿透；可调背景不透明度和字号；顶部显示在线和看过人数。
+- 悬浮窗在 Windows 10 2004 及以上默认不会被显示器采集和窗口采集拍到。
+- 两个 OBS 快捷键：显示/隐藏弹幕悬浮窗、锁定/解锁弹幕悬浮窗。
+- [安装指南](docs/INSTALL.md)：官网版、Steam 版、便携版、macOS 和 Linux 的安装步骤与排查方法。
+
+### 变更
+
+- Windows 安装包同时包含 OBS 33 的新插件结构和 OBS 31、32 的旧结构，OBS 33 不会再把插件标成旧版。
+
 ## [0.1.0]
 
 首个版本。
@@ -19,5 +32,6 @@
 - 在面板里发送弹幕。
 - 简体中文和英文界面。
 
-[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.1.0...HEAD
+[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.2.0...HEAD
+[0.2.0]: https://github.com/VOfficial404/obs-bililive/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/VOfficial404/obs-bililive/releases/tag/0.1.0

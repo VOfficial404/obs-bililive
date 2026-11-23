@@ -28,6 +28,7 @@ B 站规定粉丝数不足 5000 的主播只能用「哔哩哔哩直播姬」开
 - **标题和分区**：开播前改标题、选分区，下次打开记住上次的分区。
 - **人脸认证**：分区要求人脸认证时弹出二维码，用 App 扫码认证后自动继续开播。
 - **弹幕面板**：实时显示弹幕（带粉丝牌）、礼物、醒目留言、上舰、关注、分享和进入直播间。
+- **弹幕悬浮窗**：玩游戏时不用切屏，弹幕直接浮在游戏上面；锁定后鼠标穿透，不影响操作；默认不会被直播画面拍进去。
 - **直播数据**：看过人数、在线人数、点赞数、粉丝数。
 - **发送弹幕**：在面板底部直接发弹幕。
 - **没有直播间？** 插件里就能开通。
@@ -35,13 +36,16 @@ B 站规定粉丝数不足 5000 的主播只能用「哔哩哔哩直播姬」开
 
 ## 安装
 
-需要 OBS Studio 31 或更新版本。到 [Releases](https://github.com/VOfficial404/obs-bililive/releases/latest) 下载对应系统的安装包：
+需要 OBS Studio 31 或更新版本，**官网版、Steam 版、便携版都支持**。到 [Releases](https://github.com/VOfficial404/obs-bililive/releases/latest) 下载对应系统的安装包：
 
 | 系统 | 文件 | 安装方式 |
 |---|---|---|
-| Windows | `obs-bililive-*-windows-x64.zip` | 解压后把 `obs-bililive` 文件夹放到 `C:\ProgramData\obs-studio\plugins\` |
-| macOS | `obs-bililive-*-macos-universal.pkg` | 双击安装 |
-| Ubuntu | `obs-bililive-*-x86_64-linux-gnu.deb` | `sudo apt install ./obs-bililive-*.deb` |
+| Windows（官网版、Steam 版） | `obs-bililive-*-windows-x64.zip` | 解压后把 `obs-bililive` 文件夹放到 `C:\ProgramData\obs-studio\plugins\` |
+| Windows（便携版） | 同上 | 放到 OBS 文件夹下的 `plugins\`，见安装指南 |
+| macOS（官网版、Steam 版） | `obs-bililive-*-macos-universal.pkg` | 双击安装 |
+| Ubuntu 24.04 | `obs-bililive-*-x86_64-linux-gnu.deb` | `sudo apt install ./obs-bililive-*.deb` |
+
+Steam 版请不要把插件放进 Steam 的 OBS 安装目录。每种情况的详细步骤、怎么判断自己用的是哪个版本、装了却看不到面板怎么办，见 **[安装指南](docs/INSTALL.md)**。
 
 装好后重启 OBS，在菜单 **停靠窗口 → B站直播** 打开面板。
 
@@ -61,6 +65,19 @@ B 站规定粉丝数不足 5000 的主播只能用「哔哩哔哩直播姬」开
 
 > 每次开播 B 站都会生成新的推流码，所以请用面板上的「开始直播」开播，而不是直接点 OBS 的「开始直播」。
 
+### 弹幕悬浮窗
+
+在 **⋯ → 弹幕悬浮窗** 里勾选「显示悬浮窗」，屏幕上会出现一个半透明的弹幕窗口，始终显示在其他窗口上面：
+
+1. **摆位置**：没锁定时窗口带虚线边框，按住任意位置拖动，拖右下角调整大小。
+2. **锁定**：勾选「锁定（鼠标穿透）」后边框消失，鼠标点击会直接穿过悬浮窗落到游戏上。
+3. **外观**：在同一个菜单里调背景不透明度（0% 为完全透明，只留带阴影的文字）和字号。
+4. **快捷键**：在 OBS 的「设置 → 快捷键」里给「B站直播：显示/隐藏弹幕悬浮窗」和「B站直播：锁定/解锁弹幕悬浮窗」设置按键。OBS 在后台也能响应快捷键，打游戏时不用切出来。
+
+悬浮窗顶部显示在线人数和看过人数；进场和礼物消息是否显示，跟面板的设置一致。位置、大小和外观会被记住。
+
+**不会被直播画面拍进去**：在 Windows 10 2004 及以上，「不让直播画面拍到悬浮窗」默认开启，即使用「显示器采集」采集整个屏幕，悬浮窗也不会出现在直播里，只有你自己看得到。macOS 和 Linux 没有这个功能，请用「窗口采集」只采集游戏窗口，不要采集整个屏幕。
+
 ## 常见问题
 
 **提示需要人脸认证（60024）**
@@ -74,6 +91,9 @@ B 站并没有给所有主播开放 HEVC（H.265）推流。请在 OBS 的「设
 
 **开播后 B 站显示的开播工具是「直播姬」**
 插件就是以直播姬 PC 版的身份开播的，这是正常的。
+
+**游戏里看不到悬浮窗**
+独占全屏的游戏会盖住所有其他窗口。把游戏的显示模式改成「无边框窗口」或「窗口化全屏」。
 
 ## 注意
 
@@ -126,8 +146,8 @@ ctest --test-dir build_x86_64
 
 **BiliLive for OBS** lets you go live on Bilibili straight from OBS Studio. Bilibili only lets streamers with fewer than 5,000 followers start a broadcast from its LiveHime app; this dock starts the broadcast the way LiveHime does, writes the RTMP address into OBS and starts streaming.
 
-Features: QR-code login, title and category, one-click go live / end broadcast (synced with OBS's own Start/Stop Streaming), face verification by QR code, a live feed of danmaku, gifts, Super Chats, guard purchases, follows and entries, viewer statistics, and sending danmaku.
+Features: QR-code login, title and category, one-click go live / end broadcast (synced with OBS's own Start/Stop Streaming), face verification by QR code, a live feed of danmaku, gifts, Super Chats, guard purchases, follows and entries, viewer statistics, sending danmaku, and an always-on-top, click-through danmaku overlay for reading chat in-game (kept out of display capture on Windows 10 2004+, with OBS hotkeys to show and lock it).
 
-Install the package for your platform from [Releases](https://github.com/VOfficial404/obs-bililive/releases/latest), restart OBS and open **Docks → Bilibili Live**. Requires OBS Studio 31 or newer.
+Install the package for your platform from [Releases](https://github.com/VOfficial404/obs-bililive/releases/latest), restart OBS and open **Docks → Bilibili Live**. Requires OBS Studio 31 or newer; the website, Steam and portable builds are all supported. On Windows (website and Steam builds) put the `obs-bililive` folder in `C:\ProgramData\obs-studio\plugins\`, not in the OBS or Steam install directory. Details for every build are in the [install guide](docs/INSTALL.md) (Chinese).
 
 This is an unofficial tool, not affiliated with Bilibili. Using it may breach Bilibili's terms of service; you use it at your own risk. Session cookies are stored in plain text in `plugin_config/obs-bililive/config.json` under the OBS configuration directory.
