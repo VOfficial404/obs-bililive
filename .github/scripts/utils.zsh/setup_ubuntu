@@ -1,4 +1,4 @@
-autoload -Uz log_error log_status log_info mkcd
+autoload -Uz log_error log_status log_info log_warning mkcd
 
 if (( ! ${+project_root} )) {
   log_error "'project_root' not set. Please set before running ${0}."
@@ -35,15 +35,34 @@ if (( ! (${skips[(Ie)all]} + ${skips[(Ie)deps]}) )) {
     sudo apt-get install ${apt_args} gcc-${${target##*-}//_/-}-linux-gnu g++-${${target##*-}//_/-}-linux-gnu
   }
 
-  sudo add-apt-repository --yes ppa:obsproject/obs-studio
-  sudo apt update
+  # Retry transient mirror failures instead of failing the whole job.
+  print 'Acquire::Retries "5";' | sudo tee /etc/apt/apt.conf.d/80-retries > /dev/null
 
-  sudo apt-get install ${apt_args} \
-    build-essential \
-    libgles2-mesa-dev \
-    libcurl4-openssl-dev \
-    libsimde-dev \
-    obs-studio
+  local -a _build_packages=(build-essential libgles2-mesa-dev libcurl4-openssl-dev libsimde-dev)
+
+  # obs-studio comes from the GitHub release matching buildspec.json: it is the same package the
+  # obsproject PPA ships, but Launchpad often answers 503. The PPA stays as the fallback.
+  local obs_version="$(jq -r '.dependencies["obs-studio"].version' ${project_root}/buildspec.json)"
+  local obs_deb="${project_root}/.deps/obs-studio_${obs_version}-0obsproject1.$(lsb_release -cs)_amd64.deb"
+  mkdir -p ${obs_deb:h}
+
+  if [[ -z ${suffix} ]] && curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+    --output ${obs_deb} \
+    "https://github.com/obsproject/obs-studio/releases/download/${obs_version}/${obs_deb:t}"
+  then
+    sudo apt-get update
+    sudo apt-get install ${apt_args} ${_build_packages} ${obs_deb}
+  else
+    log_warning "No obs-studio ${obs_version} package on GitHub for this system, using the obsproject PPA"
+    local attempt
+    for attempt ({1..5}) {
+      sudo add-apt-repository --yes ppa:obsproject/obs-studio && \
+        sudo apt-get install ${apt_args} ${_build_packages} obs-studio && break
+      (( attempt < 5 )) || return 2
+      log_warning "Launchpad request failed (attempt ${attempt}/5), retrying in $(( attempt * 30 ))s"
+      sleep $(( attempt * 30 ))
+    }
+  fi
 
   local -a _qt_packages=()
 
