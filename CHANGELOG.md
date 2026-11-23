@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [0.6.1]
+
+### 修复
+
+- 弹幕悬浮窗里弹幕少的时候，弹幕被挤到窗口最底部，顶部只看得到在线人数：现在弹幕紧接在在线人数下面，从上往下排。
+
 ## [0.6.0]
 
 ### 新增
@@ -78,7 +84,8 @@
 - 在面板里发送弹幕。
 - 简体中文和英文界面。
 
-[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.6.0...HEAD
+[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.6.1...HEAD
+[0.6.1]: https://github.com/VOfficial404/obs-bililive/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/VOfficial404/obs-bililive/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/VOfficial404/obs-bililive/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/VOfficial404/obs-bililive/compare/0.3.1...0.4.0

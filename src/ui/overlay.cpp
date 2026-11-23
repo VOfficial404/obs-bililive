@@ -93,6 +93,7 @@ DanmakuOverlay::DanmakuOverlay(QWidget *parent)
 	linesLayout_->setSpacing(2);
 	linesLayout_->addWidget(header_);
 	linesLayout_->addWidget(hint_);
+	// Lines are inserted above this stretch: they start right under the header and grow downwards.
 	linesLayout_->addStretch(1);
 
 	auto *layout = new QVBoxLayout(this);
@@ -111,7 +112,7 @@ void DanmakuOverlay::appendLine(const QString &html)
 {
 	QLabel *label = makeLabel(content_);
 	label->setText(html);
-	linesLayout_->addWidget(label);
+	linesLayout_->insertWidget(linesLayout_->count() - 1, label);
 	lines_.push_back(label);
 	trimLines();
 }
