@@ -1,0 +1,15 @@
+name: 功能建议
+description: 希望插件支持的新功能
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决什么问题
+      description: 现在哪里不方便？直播姬里有、插件里没有的功能也可以写在这里。
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: 希望怎么做

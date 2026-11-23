@@ -1,0 +1,44 @@
+name: 问题反馈
+description: 插件出错、开播失败、弹幕异常
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请不要贴出 `config.json`、Cookie 或推流码。
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么
+      description: 你做了什么，期望看到什么，实际看到了什么。面板里的错误提示请原样复制。
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: obs-version
+    attributes:
+      label: OBS 版本
+      placeholder: 31.1.1
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: 操作系统
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: log
+    attributes:
+      label: OBS 日志链接
+      description: 「帮助 → 日志文件 → 上传当前日志文件」得到的链接
