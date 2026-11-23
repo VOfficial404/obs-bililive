@@ -27,20 +27,26 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <plugin-support.h>
 
 #include <QActionGroup>
+#include <QBuffer>
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDockWidget>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QIcon>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QMenuBar>
 #include <QMenu>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPushButton>
 #include <QStackedWidget>
 #include <QStyle>
@@ -59,6 +65,8 @@ using danmaku::LiveEvent;
 
 constexpr int kQrPollMs = 1500;
 constexpr int kFeedMaxLines = 1000;
+constexpr QSize kCoverSize(112, 63);
+constexpr int kCoverMaxWidth = 1920; // keeps uploads small; Bilibili shows covers far below this
 constexpr int kAlreadyHasRoom = 1531193016;
 constexpr long kExitStopTimeoutSeconds = 5;
 constexpr int kOverlayGeometrySaveMs = 500;
@@ -102,6 +110,8 @@ constexpr const char *kDockStyle = R"(
 #bililiveDock QToolButton { background: transparent; border: none; color: #a0a3ab; padding: 2px 6px; }
 #bililiveDock QToolButton:hover { color: #fb7299; }
 #bililiveDock QToolButton::menu-indicator { image: none; }
+#bililiveDock QPushButton#bililiveCover { padding: 0; border: none; border-radius: 5px; background-color: #2c2d34; color: #8c8f99; font-size: 12px; }
+#bililiveDock QPushButton#bililiveCover:hover { background-color: #35363e; color: #fb7299; }
 #bililiveDock QToolButton#bililiveMenu { font-size: 18px; font-weight: bold; }
 #bililiveDock QTabWidget::pane { border: none; }
 #bililiveDock QTabBar::tab { background: transparent; color: #8c8f99; border: none; border-bottom: 2px solid transparent; padding: 6px 12px; }
@@ -208,6 +218,22 @@ void repolish(QWidget *widget)
 {
 	widget->style()->unpolish(widget);
 	widget->style()->polish(widget);
+}
+
+// Cover thumbnail: centre-cropped to the button and rounded like the cards around it.
+QPixmap coverThumbnail(const QImage &image)
+{
+	const QImage scaled = image.scaled(kCoverSize, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation);
+	QPixmap out(kCoverSize);
+	out.fill(Qt::transparent);
+	QPainter painter(&out);
+	painter.setRenderHint(QPainter::Antialiasing);
+	QPainterPath clip;
+	clip.addRoundedRect(QRectF(QPointF(0, 0), QSizeF(kCoverSize)), 5, 5);
+	painter.setClipPath(clip);
+	painter.drawImage((kCoverSize.width() - scaled.width()) / 2, (kCoverSize.height() - scaled.height()) / 2,
+			  scaled);
+	return out;
 }
 
 QLabel *addStatTile(QHBoxLayout *row, QWidget *parent, const QString &caption)
@@ -341,9 +367,18 @@ QWidget *BiliDock::buildMainPage()
 {
 	auto *page = new QWidget(this);
 
-	// Account card: name, live pill and menu; room number with copy; viewer stats.
+	// Account card: cover thumbnail beside name/live pill/menu, room number with copy, danmaku state; stats.
 	auto *accountCard = new QFrame(page);
 	accountCard->setObjectName(QStringLiteral("bililiveCard"));
+
+	coverButton_ = new QPushButton(accountCard);
+	coverButton_->setObjectName(QStringLiteral("bililiveCover"));
+	coverButton_->setFixedSize(kCoverSize);
+	coverButton_->setIconSize(kCoverSize);
+	coverButton_->setCursor(Qt::PointingHandCursor);
+	coverButton_->setToolTip(T("Cover.Tip"));
+	connect(coverButton_, &QPushButton::clicked, this, &BiliDock::chooseCover);
+	coverButton_->hide();
 
 	accountLabel_ = new QLabel(accountCard);
 	accountLabel_->setObjectName(QStringLiteral("bililiveName"));
@@ -364,15 +399,24 @@ QWidget *BiliDock::buildMainPage()
 	copyRoom->setText(T("Room.Copy"));
 	copyRoom->setToolTip(T("Room.CopyTip"));
 	connect(copyRoom, &QToolButton::clicked, this, [this]() { copyToClipboard(QString::number(room_.roomId)); });
-	danmakuState_ = new QLabel(roomIdRow_);
-	danmakuState_->setObjectName(QStringLiteral("bililiveMuted"));
 	auto *roomIdLayout = new QHBoxLayout(roomIdRow_);
 	roomIdLayout->setContentsMargins(0, 0, 0, 0);
 	roomIdLayout->addWidget(roomIdLabel_);
 	roomIdLayout->addWidget(copyRoom);
 	roomIdLayout->addStretch(1);
-	roomIdLayout->addWidget(danmakuState_);
 	roomIdRow_->hide();
+	danmakuState_ = new QLabel(accountCard);
+	danmakuState_->setObjectName(QStringLiteral("bililiveMuted"));
+
+	auto *identity = new QVBoxLayout();
+	identity->setSpacing(2);
+	identity->addLayout(nameRow);
+	identity->addWidget(roomIdRow_);
+	identity->addWidget(danmakuState_);
+	auto *topRow = new QHBoxLayout();
+	topRow->setSpacing(10);
+	topRow->addWidget(coverButton_, 0, Qt::AlignTop);
+	topRow->addLayout(identity, 1);
 
 	auto *statsRow = new QHBoxLayout();
 	statOnline_ = addStatTile(statsRow, accountCard, T("Stats.Online"));
@@ -383,8 +427,7 @@ QWidget *BiliDock::buildMainPage()
 	auto *accountLayout = new QVBoxLayout(accountCard);
 	accountLayout->setContentsMargins(10, 8, 10, 10);
 	accountLayout->setSpacing(6);
-	accountLayout->addLayout(nameRow);
-	accountLayout->addWidget(roomIdRow_);
+	accountLayout->addLayout(topRow);
 	accountLayout->addLayout(statsRow);
 
 	// Shown when the account has never opened a live room.
@@ -848,6 +891,7 @@ void BiliDock::logout()
 	feedGifts_->clear();
 	feedSuperChats_->clear();
 	roomIdRow_->hide();
+	coverButton_->hide();
 	overlay_->clearLines();
 	pages_->setCurrentIndex(0);
 }
@@ -907,6 +951,8 @@ void BiliDock::loadAccount()
 			accountLabel_->setText(user_.name);
 			roomIdLabel_->setText(T("Room.Id").arg(room_.roomId));
 			roomIdRow_->setVisible(room_.roomId != 0);
+			coverButton_->setVisible(room_.roomId != 0);
+			loadCover(room_.coverUrl);
 			noRoomPanel_->setVisible(room_.roomId == 0);
 			roomPanel_->setVisible(room_.roomId != 0);
 			sendEdit_->setEnabled(room_.roomId != 0);
@@ -1060,6 +1106,63 @@ void BiliDock::stopLive()
 			    setLive(false);
 			    setBusy(false, T("Live.Stopped"));
 			    appendSystem(T("Live.Stopped"), kColorSystem);
+		    });
+}
+
+void BiliDock::loadCover(const QString &url)
+{
+	coverButton_->setIcon(QIcon());
+	coverButton_->setText(T("Cover.Upload"));
+	if (url.isEmpty())
+		return;
+	const auto api = api_;
+	// hdslb resizes on the fly; a small copy is plenty for the thumbnail.
+	const QString small = url + QStringLiteral("@320w.jpg");
+	runner_.run([api, small]() { return api->downloadImage(small); },
+		    [this](const QByteArray &data) {
+			    const QImage image = QImage::fromData(data);
+			    if (!image.isNull())
+				    setCoverImage(image);
+		    });
+}
+
+void BiliDock::setCoverImage(const QImage &image)
+{
+	coverButton_->setText(QString());
+	coverButton_->setIcon(QIcon(coverThumbnail(image)));
+}
+
+void BiliDock::chooseCover()
+{
+	if (room_.roomId == 0 || !coverButton_->isEnabled())
+		return;
+	const QString path = QFileDialog::getOpenFileName(this, T("Cover.Choose"), QString(), T("Cover.Filter"));
+	if (path.isEmpty())
+		return;
+	QImage image(path);
+	if (image.isNull()) {
+		appendSystem(T("Cover.Invalid").arg(path), kColorError);
+		return;
+	}
+	if (image.width() > kCoverMaxWidth)
+		image = image.scaledToWidth(kCoverMaxWidth, Qt::SmoothTransformation);
+	QByteArray jpeg;
+	QBuffer buffer(&jpeg);
+	buffer.open(QIODevice::WriteOnly);
+	image.convertToFormat(QImage::Format_RGB888).save(&buffer, "JPG", 90);
+
+	coverButton_->setEnabled(false);
+	appendSystem(T("Cover.Uploading"));
+	const auto api = api_;
+	runner_.run([api, jpeg]() { return api->uploadCover(jpeg, "image/jpeg"); },
+		    [this, image](const ApiResult &result) {
+			    coverButton_->setEnabled(true);
+			    if (!result.ok()) {
+				    appendError(result);
+				    return;
+			    }
+			    setCoverImage(image);
+			    appendSystem(T("Cover.Uploaded"), kColorSystem);
 		    });
 }
 

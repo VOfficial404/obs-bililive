@@ -4,10 +4,13 @@
 
 ## [Unreleased]
 
+## [0.5.0]
+
 ### 新增
 
 - 弹幕显示身份标签：主播、房管、舰长、提督、总督；主播和大航海成员的名字高亮。
 - 粉丝牌使用 B 站下发的真实颜色，熄灭的粉丝牌显示为灰色。
+- 面板左上角显示直播间封面缩略图；点击可选择本地图片上传为新封面（B 站审核后生效）。
 
 ## [0.4.0]
 
@@ -65,7 +68,8 @@
 - 在面板里发送弹幕。
 - 简体中文和英文界面。
 
-[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.4.0...HEAD
+[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.5.0...HEAD
+[0.5.0]: https://github.com/VOfficial404/obs-bililive/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/VOfficial404/obs-bililive/compare/0.3.1...0.4.0
 [0.3.1]: https://github.com/VOfficial404/obs-bililive/compare/0.3.0...0.3.1
 [0.3.0]: https://github.com/VOfficial404/obs-bililive/compare/0.2.0...0.3.0

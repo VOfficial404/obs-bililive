@@ -33,6 +33,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <memory>
 
 class QComboBox;
+class QImage;
 class QLabel;
 class QLineEdit;
 class QMenu;
@@ -88,6 +89,9 @@ private:
 	void startLive();
 	void stopLive();
 	void saveTitle();
+	void loadCover(const QString &url);
+	void setCoverImage(const QImage &image);
+	void chooseCover();
 	void sendDanmaku();
 
 	void setLive(bool live);
@@ -151,6 +155,7 @@ private:
 	QTextBrowser *feedSuperChats_ = nullptr; // Super Chats only
 	QLineEdit *sendEdit_ = nullptr;
 	QPushButton *sendButton_ = nullptr;
+	QPushButton *coverButton_ = nullptr;
 
 	std::unique_ptr<DanmakuOverlay> overlay_; // top-level on purpose, see DanmakuOverlay
 	QMenu *menu_ = nullptr;                   // shared by the ⋯ button and the menu bar

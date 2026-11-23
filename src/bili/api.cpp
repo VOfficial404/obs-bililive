@@ -317,6 +317,7 @@ RoomInfo BiliApi::fetchRoomOfUser(qint64 uid)
 	room.areaId = static_cast<int>(jsonInt(data.value(QLatin1String("area_id"))));
 	room.parentAreaId = static_cast<int>(jsonInt(data.value(QLatin1String("parent_area_id"))));
 	room.liveStatus = static_cast<int>(jsonInt(data.value(QLatin1String("live_status"))));
+	room.coverUrl = data.value(QLatin1String("user_cover")).toString();
 	return room;
 }
 
@@ -361,6 +362,41 @@ ApiResult BiliApi::updateTitle(qint64 roomId, const QString &title)
 				   {QStringLiteral("csrf"), csrf},
 				   {QStringLiteral("csrf_token"), csrf}});
 	return perform(request);
+}
+
+QByteArray BiliApi::downloadImage(const QString &url)
+{
+	const HttpResponse response = httpPerform(webRequest(url.toUtf8()));
+	return response.error.isEmpty() && response.status == 200 ? response.body : QByteArray();
+}
+
+ApiResult BiliApi::uploadCover(const QByteArray &image, const QByteArray &contentType)
+{
+	const QString csrf = credentials().biliJct;
+	HttpRequest upload = webRequest("https://api.bilibili.com/x/upload/web/image?csrf=" + queryValue(csrf));
+	upload.multipart = {{"bucket", "live", {}, {}},
+			    {"dir", "new_room_cover", {}, {}},
+			    {"file", image, "cover", contentType}};
+	upload.timeoutSeconds = 60;
+	const ApiResult uploaded = perform(upload);
+	const QString location = uploaded.object().value(QLatin1String("location")).toString();
+	if (!uploaded.ok())
+		return uploaded;
+	if (location.isEmpty())
+		return localFailure(kBadResponse, QStringLiteral("upload/web/image returned no location"));
+
+	HttpRequest update = webRequest("https://api.live.bilibili.com/xlive/app-blink/v1/preLive/UpdatePreLiveInfo");
+	update.post = true;
+	update.body = encodeForm({{QStringLiteral("platform"), QStringLiteral("pc_link")},
+				  {QStringLiteral("mobi_app"), QStringLiteral("pc_link")},
+				  {QStringLiteral("build"), QStringLiteral("1")},
+				  {QStringLiteral("cover"), location},
+				  {QStringLiteral("coverVertical"), QString()},
+				  {QStringLiteral("liveDirectionType"), QStringLiteral("1")},
+				  {QStringLiteral("csrf_token"), csrf},
+				  {QStringLiteral("csrf"), csrf},
+				  {QStringLiteral("visit_id"), QString()}});
+	return perform(update);
 }
 
 StartLiveResult BiliApi::startLive(qint64 roomId, int areaId)

@@ -84,6 +84,7 @@ struct RoomInfo {
 	int areaId = 0;
 	int parentAreaId = 0;
 	int liveStatus = 0; // 0 offline, 1 live, 2 replaying
+	QString coverUrl;   // empty when the room has no cover
 };
 
 struct Area {
@@ -138,6 +139,10 @@ public:
 	ApiResult createRoom();
 
 	ApiResult updateTitle(qint64 roomId, const QString &title);
+	// Raw bytes of an image on Bilibili's CDN; empty on failure.
+	QByteArray downloadImage(const QString &url);
+	// Uploads a JPEG/PNG as the room cover; Bilibili reviews it before viewers see it.
+	ApiResult uploadCover(const QByteArray &image, const QByteArray &contentType);
 	StartLiveResult startLive(qint64 roomId, int areaId);
 	ApiResult stopLive(qint64 roomId, long timeoutSeconds = 15);
 	// data.is_identified turns true once the face verification is done.

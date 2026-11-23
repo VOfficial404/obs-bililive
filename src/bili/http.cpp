@@ -88,7 +88,20 @@ HttpResponse httpPerform(const HttpRequest &request)
 		curl_easy_setopt(curl, CURLOPT_USERAGENT, request.userAgent.constData());
 	if (!request.cookie.isEmpty())
 		curl_easy_setopt(curl, CURLOPT_COOKIE, request.cookie.constData());
-	if (request.post) {
+	curl_mime *mime = nullptr;
+	if (!request.multipart.isEmpty()) {
+		mime = curl_mime_init(curl);
+		for (const HttpFormPart &field : request.multipart) {
+			curl_mimepart *part = curl_mime_addpart(mime);
+			curl_mime_name(part, field.name.constData());
+			curl_mime_data(part, field.data.constData(), static_cast<size_t>(field.data.size()));
+			if (!field.fileName.isEmpty())
+				curl_mime_filename(part, field.fileName.constData());
+			if (!field.contentType.isEmpty())
+				curl_mime_type(part, field.contentType.constData());
+		}
+		curl_easy_setopt(curl, CURLOPT_MIMEPOST, mime);
+	} else if (request.post) {
 		curl_easy_setopt(curl, CURLOPT_POST, 1L);
 		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request.body.constData());
 		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(request.body.size()));
@@ -100,6 +113,7 @@ HttpResponse httpPerform(const HttpRequest &request)
 	else
 		response.error = QString::fromUtf8(errorBuffer[0] ? errorBuffer : curl_easy_strerror(code));
 
+	curl_mime_free(mime);
 	curl_slist_free_all(headers);
 	curl_easy_cleanup(curl);
 	return response;

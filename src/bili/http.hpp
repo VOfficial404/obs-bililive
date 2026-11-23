@@ -24,10 +24,19 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 namespace bililive::bili {
 
+// One field of a multipart/form-data body; a file field sets fileName and contentType.
+struct HttpFormPart {
+	QByteArray name;
+	QByteArray data;
+	QByteArray fileName;
+	QByteArray contentType;
+};
+
 struct HttpRequest {
 	QByteArray url;
 	bool post = false;
 	QByteArray body;
+	QList<HttpFormPart> multipart; // when set, sent as multipart/form-data instead of body
 	QByteArray cookie;
 	QByteArray userAgent;
 	QList<QByteArray> headers;
