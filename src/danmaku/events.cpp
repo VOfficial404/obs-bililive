@@ -78,11 +78,16 @@ std::optional<LiveEvent> parseDanmaku(const QJsonObject &root)
 	event.text = info.at(1).toString();
 	event.uid = toInt(userInfo.at(0));
 	event.user = userInfo.at(1).toString();
+	// info[3]: level, name, anchor name, room id, colour, …, guard level [10], lit [11]
 	const QJsonArray medal = info.size() > 3 ? info.at(3).toArray() : QJsonArray();
 	if (medal.size() >= 2) {
 		event.medalLevel = static_cast<int>(toInt(medal.at(0)));
 		event.medal = medal.at(1).toString();
+		event.medalColor = static_cast<quint32>(toInt(medal.at(4)));
+		event.medalLit = medal.size() <= 11 || toInt(medal.at(11)) != 0;
 	}
+	event.isAdmin = toInt(userInfo.at(2)) == 1;
+	event.guardLevel = info.size() > 7 ? static_cast<int>(toInt(info.at(7))) : 0;
 	return event;
 }
 

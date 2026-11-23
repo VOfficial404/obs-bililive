@@ -27,7 +27,7 @@ namespace bililive::danmaku {
 
 struct LiveEvent {
 	enum class Kind {
-		Danmaku,     // user, text, medal, medalLevel
+		Danmaku,     // user, text, medal*, isAdmin, guardLevel
 		Gift,        // user, action, item, count, amountYuan
 		SuperChat,   // user, text, amountYuan
 		Guard,       // user, item, count, amountYuan
@@ -51,6 +51,10 @@ struct LiveEvent {
 	QString item;
 	QString medal;
 	int medalLevel = 0;
+	quint32 medalColor = 0; // 0xRRGGBB from Bilibili; 0 when unknown
+	bool medalLit = true;   // unlit medals are drawn grey
+	bool isAdmin = false;   // room moderator (房管)
+	int guardLevel = 0;     // 0 none, 1 总督, 2 提督, 3 舰长
 	qint64 count = 0;
 	double amountYuan = 0;
 };

@@ -183,7 +183,8 @@ private slots:
 	void parsesDanmaku()
 	{
 		const auto event = danmaku::parseCommand(
-			R"({"cmd":"DANMU_MSG:4:0:2:2:2:0","info":[[0,1,25,16777215],"你好",[123,"观众",0],[12,"粉丝团",""]]})");
+			R"({"cmd":"DANMU_MSG:4:0:2:2:2:0","info":[[0,1,25,16777215],"你好",[123,"观众",1,0,0,10000,1,""],)"
+			R"([12,"粉丝团","主播",456,398668,"",0,398668,398668,6850801,3,0,789],[3],["",""],0,3]})");
 		QVERIFY(event);
 		QCOMPARE(event->kind, LiveEvent::Kind::Danmaku);
 		QCOMPARE(event->text, QStringLiteral("你好"));
@@ -191,6 +192,18 @@ private slots:
 		QCOMPARE(event->uid, qint64(123));
 		QCOMPARE(event->medal, QStringLiteral("粉丝团"));
 		QCOMPARE(event->medalLevel, 12);
+		QCOMPARE(event->medalColor, quint32(0x06154c));
+		QVERIFY(!event->medalLit);
+		QVERIFY(event->isAdmin);
+		QCOMPARE(event->guardLevel, 3);
+
+		// A viewer without medal, moderator flag or guard.
+		const auto plain = danmaku::parseCommand(
+			R"({"cmd":"DANMU_MSG","info":[[0],"hi",[1,"b",0,0,0,10000,1,""],[],[0],["",""],0,0]})");
+		QVERIFY(plain);
+		QVERIFY(plain->medal.isEmpty());
+		QVERIFY(!plain->isAdmin);
+		QCOMPARE(plain->guardLevel, 0);
 	}
 
 	void parsesGiftV2()

@@ -135,16 +135,49 @@ QString countText(qint64 value)
 	return T("Stats.Large").arg(QString::number(static_cast<double>(value) / static_cast<double>(unit), 'f', 1));
 }
 
-// Fan medal colours by level band, as LiveHime draws them.
-QString medalBadge(const QString &name, int level)
+QString badge(const char *background, const QString &text)
 {
-	static constexpr const char *kColors[] = {"#5c968e", "#5d7b9e", "#8d7ca6", "#be6686", "#c79d24",
-						  "#1a544b", "#06154c", "#2d0855", "#7a0423", "#ff610b"};
-	const QLatin1String color(kColors[qBound(0, (qMax(level, 1) - 1) / 4, 9)]);
+	return QStringLiteral("<span style=\"background-color:%1;color:#ffffff\">&nbsp;%2&nbsp;</span>&nbsp;")
+		.arg(QLatin1String(background), text.toHtmlEscaped());
+}
+
+// Fan medal in the medal's own colour; falls back to LiveHime's level bands, grey when the medal is unlit.
+QString medalBadge(const LiveEvent &event)
+{
+	static constexpr const char *kBands[] = {"#5c968e", "#5d7b9e", "#8d7ca6", "#be6686", "#c79d24",
+						 "#1a544b", "#06154c", "#2d0855", "#7a0423", "#ff610b"};
+	QString color = event.medalColor ? QStringLiteral("#%1").arg(event.medalColor, 6, 16, QLatin1Char('0'))
+					 : QLatin1String(kBands[qBound(0, (qMax(event.medalLevel, 1) - 1) / 4, 9)]);
+	if (!event.medalLit)
+		color = QStringLiteral("#9a9ba1");
 	return QStringLiteral("<span style=\"background-color:%1;color:#ffffff\">&nbsp;%2&nbsp;</span>"
 			      "<span style=\"background-color:#ffffff;color:%1\">&nbsp;%3&nbsp;</span>&nbsp;")
-		.arg(color, name.toHtmlEscaped())
-		.arg(level);
+		.arg(color, event.medal.toHtmlEscaped())
+		.arg(event.medalLevel);
+}
+
+// 主播 / 房管 / 舰长·提督·总督 tags in front of a danmaku sender.
+QString identityBadges(const LiveEvent &event, qint64 anchorUid)
+{
+	QString html;
+	if (anchorUid != 0 && event.uid == anchorUid)
+		html += badge("#fb7299", T("Badge.Anchor"));
+	if (event.isAdmin)
+		html += badge("#f0a020", T("Badge.Admin"));
+	switch (event.guardLevel) {
+	case 1:
+		html += badge("#e8743b", T("Badge.Guard1"));
+		break;
+	case 2:
+		html += badge("#a35cf0", T("Badge.Guard2"));
+		break;
+	case 3:
+		html += badge("#3a8ef6", T("Badge.Guard3"));
+		break;
+	default:
+		break;
+	}
+	return html;
 }
 
 // Super Chat card colour by price tier (CNY).
@@ -1113,8 +1146,11 @@ void BiliDock::onLiveEvent(const LiveEvent &event)
 	const QString user = span(kColorUser, event.user);
 	switch (event.kind) {
 	case LiveEvent::Kind::Danmaku: {
-		const QString medal = event.medal.isEmpty() ? QString() : medalBadge(event.medal, event.medalLevel);
-		appendLine(medal + user + span(kColorUser, QStringLiteral("：")) + event.text.toHtmlEscaped());
+		const QString medal = event.medal.isEmpty() ? QString() : medalBadge(event);
+		const bool anchor = user_.uid != 0 && event.uid == user_.uid;
+		const char *nameColor = anchor ? "#fb7299" : event.guardLevel ? "#7ec8ff" : kColorUser;
+		appendLine(medal + identityBadges(event, user_.uid) + span(nameColor, event.user) +
+			   span(kColorUser, QStringLiteral("：")) + event.text.toHtmlEscaped());
 		break;
 	}
 	case LiveEvent::Kind::Gift: {
