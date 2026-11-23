@@ -31,7 +31,29 @@ size_t appendBody(char *data, size_t size, size_t count, void *userData)
 	return bytes;
 }
 
+size_t collectHeader(char *data, size_t size, size_t count, void *userData)
+{
+	const size_t bytes = size * count;
+	parseSetCookieHeader(QByteArray(data, static_cast<qsizetype>(bytes)),
+			     *static_cast<QHash<QByteArray, QByteArray> *>(userData));
+	return bytes;
+}
+
 } // namespace
+
+void parseSetCookieHeader(const QByteArray &line, QHash<QByteArray, QByteArray> &cookies)
+{
+	static const QByteArray kPrefix = "set-cookie:";
+	if (!line.toLower().startsWith(kPrefix))
+		return;
+	const QByteArray pair = line.mid(kPrefix.size()).split(';').first().trimmed();
+	const qsizetype eq = pair.indexOf('=');
+	if (eq <= 0)
+		return;
+	const QByteArray value = pair.mid(eq + 1).trimmed();
+	if (!value.isEmpty())
+		cookies.insert(pair.left(eq).trimmed(), value);
+}
 
 HttpResponse httpPerform(const HttpRequest &request)
 {
@@ -56,6 +78,8 @@ HttpResponse httpPerform(const HttpRequest &request)
 	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errorBuffer);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendBody);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
+	curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, collectHeader);
+	curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response.cookies);
 #ifdef CURLSSLOPT_REVOKE_BEST_EFFORT
 	// Schannel fails hard when the revocation server is unreachable; OBS does the same.
 	curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, static_cast<long>(CURLSSLOPT_REVOKE_BEST_EFFORT));

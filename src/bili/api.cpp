@@ -65,6 +65,26 @@ ApiResult localFailure(int code, const QString &message)
 	return result;
 }
 
+ApiResult parseEnvelope(const HttpResponse &response)
+{
+	if (!response.error.isEmpty())
+		return localFailure(kNetworkError, response.error);
+
+	QJsonParseError parseError;
+	const QJsonDocument document = QJsonDocument::fromJson(response.body, &parseError);
+	if (parseError.error != QJsonParseError::NoError || !document.isObject())
+		return localFailure(kBadResponse, QStringLiteral("HTTP %1").arg(response.status));
+
+	const QJsonObject root = document.object();
+	ApiResult result;
+	result.code = root.value(QLatin1String("code")).toInt(kBadResponse);
+	result.message = root.value(QLatin1String("message")).toString();
+	if (result.message.isEmpty())
+		result.message = root.value(QLatin1String("msg")).toString();
+	result.data = root.value(QLatin1String("data"));
+	return result;
+}
+
 } // namespace
 
 QByteArray Credentials::cookieHeader() const
@@ -100,23 +120,7 @@ Credentials BiliApi::credentials() const
 
 ApiResult BiliApi::perform(const HttpRequest &request) const
 {
-	const HttpResponse response = httpPerform(request);
-	if (!response.error.isEmpty())
-		return localFailure(kNetworkError, response.error);
-
-	QJsonParseError parseError;
-	const QJsonDocument document = QJsonDocument::fromJson(response.body, &parseError);
-	if (parseError.error != QJsonParseError::NoError || !document.isObject())
-		return localFailure(kBadResponse, QStringLiteral("HTTP %1").arg(response.status));
-
-	const QJsonObject root = document.object();
-	ApiResult result;
-	result.code = root.value(QLatin1String("code")).toInt(kBadResponse);
-	result.message = root.value(QLatin1String("message")).toString();
-	if (result.message.isEmpty())
-		result.message = root.value(QLatin1String("msg")).toString();
-	result.data = root.value(QLatin1String("data"));
-	return result;
+	return parseEnvelope(httpPerform(request));
 }
 
 HttpRequest BiliApi::webRequest(const QByteArray &url) const
@@ -204,8 +208,10 @@ QrCode BiliApi::generateLoginQr()
 QrPoll BiliApi::pollLoginQr(const QString &key)
 {
 	QrPoll poll;
-	poll.result = perform(webRequest("https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=" +
-					 queryValue(key)));
+	// Called directly: the session arrives in Set-Cookie, which perform() drops.
+	const HttpResponse response = httpPerform(webRequest(
+		"https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=" + queryValue(key)));
+	poll.result = parseEnvelope(response);
 	if (!poll.result.ok())
 		return poll;
 
@@ -228,11 +234,17 @@ QrPoll BiliApi::pollLoginQr(const QString &key)
 		return poll;
 	}
 
-	// The cross-domain URL carries the same values the response sets as cookies.
+	// Set-Cookie carries the session; older responses also repeated it in the cross-domain URL.
 	const QUrlQuery query(QUrl(data.value(QLatin1String("url")).toString()));
-	poll.credentials.sessdata = query.queryItemValue(QStringLiteral("SESSDATA"), QUrl::FullyEncoded);
-	poll.credentials.biliJct = query.queryItemValue(QStringLiteral("bili_jct"), QUrl::FullyEncoded);
-	poll.credentials.uid = query.queryItemValue(QStringLiteral("DedeUserID"), QUrl::FullyEncoded);
+	const auto session = [&](const char *name) {
+		const QByteArray cookie = response.cookies.value(name);
+		return cookie.isEmpty() ? query.queryItemValue(QLatin1String(name), QUrl::FullyEncoded)
+					: QString::fromUtf8(cookie);
+	};
+	poll.credentials.sessdata = session("SESSDATA");
+	poll.credentials.biliJct = session("bili_jct");
+	poll.credentials.uid = session("DedeUserID");
+	poll.credentials.buvid3 = QString::fromUtf8(response.cookies.value("buvid3"));
 	if (!poll.credentials.loggedIn()) {
 		poll.result = localFailure(kBadResponse, QStringLiteral("QR login succeeded without a session"));
 		return poll;

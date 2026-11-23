@@ -16,9 +16,11 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
+#include "bili/http.hpp"
 #include "bili/sign.hpp"
 #include "danmaku/events.hpp"
 #include "danmaku/packet.hpp"
+#include "update.hpp"
 
 #include <QTest>
 
@@ -74,10 +76,35 @@ private slots:
 				"appkey=aae92bc66f3edfab&system_version=2&ts=1752971145&sign=49d289e3ad34c509cc66fbee1c0affec"));
 	}
 
+	// The QR login session only arrives this way; values stay URL-encoded as the cookie header needs them.
+	void setCookieHeadersYieldSession()
+	{
+		QHash<QByteArray, QByteArray> cookies;
+		bili::parseSetCookieHeader(
+			"Set-Cookie: SESSDATA=ab%2C12%2Ccd*41; Path=/; Domain=bilibili.com; HttpOnly\r\n", cookies);
+		bili::parseSetCookieHeader("set-cookie: bili_jct=0123abcd; Path=/\r\n", cookies);
+		bili::parseSetCookieHeader("Set-Cookie: empty=; Path=/\r\n", cookies);
+		bili::parseSetCookieHeader("Content-Type: application/json\r\n", cookies);
+		QCOMPARE(cookies.size(), 2);
+		QCOMPARE(cookies.value("SESSDATA"), QByteArray("ab%2C12%2Ccd*41"));
+		QCOMPARE(cookies.value("bili_jct"), QByteArray("0123abcd"));
+	}
+
 	void formEncodingMatchesPythonUrlencode()
 	{
 		QCOMPARE(bili::encodeForm({{QStringLiteral("title"), QStringLiteral("a b&c/中")}}),
 			 QByteArray("title=a+b%26c%2F%E4%B8%AD"));
+	}
+
+	void comparesVersions()
+	{
+		QVERIFY(isNewerVersion(QStringLiteral("0.4.0"), QStringLiteral("0.3.1")));
+		QVERIFY(isNewerVersion(QStringLiteral("0.10.0"), QStringLiteral("0.9.9")));
+		QVERIFY(isNewerVersion(QStringLiteral("1.0"), QStringLiteral("0.99.99")));
+		QVERIFY(!isNewerVersion(QStringLiteral("0.3.1"), QStringLiteral("0.3.1")));
+		QVERIFY(!isNewerVersion(QStringLiteral("0.3.0"), QStringLiteral("0.3.1")));
+		QVERIFY(!isNewerVersion(QStringLiteral("0.4.0-beta1"), QStringLiteral("0.4.0")));
+		QVERIFY(isNewerVersion(QStringLiteral("0.4.0"), QStringLiteral("0.4.0-beta1")));
 	}
 
 	// Vectors from bilibili-API-collect docs/misc/sign/wbi.md.

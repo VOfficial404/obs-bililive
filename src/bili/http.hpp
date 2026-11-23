@@ -19,7 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #pragma once
 
 #include <QByteArray>
-#include <QList>
+#include <QHash>
 #include <QString>
 
 namespace bililive::bili {
@@ -37,8 +37,12 @@ struct HttpRequest {
 struct HttpResponse {
 	long status = 0;
 	QByteArray body;
-	QString error; // transport failure; empty when a response arrived
+	QHash<QByteArray, QByteArray> cookies; // name -> value from Set-Cookie, value kept as sent
+	QString error;                         // transport failure; empty when a response arrived
 };
+
+// Adds the cookie of one "Set-Cookie: name=value; attrs" header line; other lines are ignored.
+void parseSetCookieHeader(const QByteArray &line, QHash<QByteArray, QByteArray> &cookies);
 
 // Blocking; call from worker threads only.
 HttpResponse httpPerform(const HttpRequest &request);
