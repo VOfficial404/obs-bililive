@@ -43,8 +43,8 @@ B 站规定粉丝数不足 5000 的主播只能用「哔哩哔哩直播姬」开
 
 | 系统 | 文件 | 安装方式 |
 |---|---|---|
-| Windows（官网版、Steam 版） | `obs-bililive-*-windows-x64.zip` | 解压后把 `obs-bililive` 文件夹放到 `C:\ProgramData\obs-studio\plugins\` |
-| Windows（便携版） | 同上 | 放到 OBS 文件夹下的 `plugins\`，见安装指南 |
+| Windows（官网版、Steam 版） | `obs-bililive-*-windows-x64-setup.exe` | **双击安装**，一路下一步；升级时直接运行新版安装程序 |
+| Windows（便携版） | 同上，或 `obs-bililive-*-windows-x64.zip` | 安装时把目录改成 OBS 文件夹下的 `plugins\obs-bililive`，见安装指南 |
 | macOS（官网版、Steam 版） | `obs-bililive-*-macos-universal.pkg` | 双击安装 |
 | Ubuntu 24.04 | `obs-bililive-*-x86_64-linux-gnu.deb` | `sudo apt install ./obs-bililive-*.deb` |
 

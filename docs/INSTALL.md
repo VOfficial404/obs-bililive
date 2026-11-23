@@ -18,13 +18,26 @@
 
 Steam 版和官网版是同一个程序，读取插件的位置也一样，都是 `C:\ProgramData\obs-studio\plugins\`。插件**不要**放进 OBS 的安装目录（官网版的 `C:\Program Files\obs-studio\`，Steam 版的 `steamapps\common\OBS Studio\`）：OBS 33 已经把那里的第三方插件标成「旧版」，OBS 34 起就不再读取了。另外，Steam 卸载或重装 OBS 时会把整个安装目录删掉，放在 `ProgramData` 下的插件不受影响。
 
+### 用安装程序（推荐）
+
+1. 下载 `obs-bililive-*-windows-x64-setup.exe` 并双击运行，Windows 要求管理员权限时点「是」。
+2. 安装目录保持默认的 `C:\ProgramData\obs-studio\plugins\obs-bililive`，一路点「下一步」。
+3. 如果 OBS 正开着，安装程序会提示关闭它，选「自动关闭应用程序」即可。
+4. 启动 OBS，在顶栏的 **B站直播 → 显示面板** 打开面板。
+
+Windows 可能提示「Windows 已保护你的电脑」，这是因为安装程序没有付费的代码签名证书：点「更多信息 → 仍要运行」。
+
+卸载：「设置 → 应用 → 已安装的应用」里找到「BiliLive for OBS」卸载。
+
+### 手动安装（zip）
+
 1. 关闭 OBS。
 2. 解压下载的 `obs-bililive-*-windows-x64.zip`，会得到一个 `obs-bililive` 文件夹。
 3. 在资源管理器的地址栏输入 `%ProgramData%\obs-studio\plugins` 并回车。
    - `ProgramData` 默认是隐藏文件夹，直接在地址栏输入就能打开。
    - 提示找不到时，先进入 `%ProgramData%`，再依次新建 `obs-studio` 和 `plugins` 两个文件夹。
 4. 把第 2 步的 `obs-bililive` 文件夹整个复制进去。Windows 要求管理员权限时点「继续」。
-5. 启动 OBS，在菜单「停靠窗口」里勾选「B站直播」。
+5. 启动 OBS，在顶栏的 **B站直播 → 显示面板** 打开面板。
 
 放好以后应该是这样：
 
@@ -47,6 +60,8 @@ C:\ProgramData\obs-studio\plugins\
 ## Windows：便携版
 
 便携版不读 `ProgramData`，插件要放在 OBS 自己的文件夹里。下面的 `<OBS目录>` 指的是包含 `bin`、`data` 等文件夹的那一层。
+
+用安装程序时，在「选择目标位置」这一步把目录改成 `<OBS目录>\plugins\obs-bililive` 即可（仅 OBS 33 及以后）。也可以按下面的方法手动放。
 
 **OBS 33 及以后**：把解压得到的 `obs-bililive` 文件夹整个放进 `<OBS目录>\plugins\`（没有 `plugins` 文件夹就新建一个）：
 
@@ -103,8 +118,8 @@ Steam 上没有 Linux 版 OBS（[OBS 官方说明](https://obsproject.com/kb/ste
 
 ## 更新和卸载
 
-- **更新**：关闭 OBS，用新版本的文件覆盖旧文件，再启动 OBS。
-- **卸载**：先在插件里「退出登录」，让登录凭据失效；然后删除上面安装的 `obs-bililive` 文件夹（macOS 是 `obs-bililive.plugin`，Ubuntu 用 `sudo apt remove obs-bililive`）。
+- **更新**：插件启动时会检查新版本，有新版本时「B站直播」菜单最上面会出现「发现新版本」，点它打开下载页。Windows 下载新的 `-setup.exe` 直接运行，会装到原来的位置；用 zip 的话，关闭 OBS 后用新文件覆盖旧文件。
+- **卸载**：先在插件里「退出登录」，让登录凭据失效；然后在 Windows「已安装的应用」里卸载「BiliLive for OBS」，手动安装的删除上面安装的 `obs-bililive` 文件夹（macOS 是 `obs-bililive.plugin`，Ubuntu 用 `sudo apt remove obs-bililive`）。
 - **插件的配置和登录凭据**存放在：
   - Windows：`%APPDATA%\obs-studio\plugin_config\obs-bililive\`（便携版在 `<OBS目录>\config\obs-studio\plugin_config\obs-bililive\`）
   - macOS：`~/Library/Application Support/obs-studio/plugin_config/obs-bililive/`

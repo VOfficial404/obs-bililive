@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [0.4.0]
+
+### 修复
+
+- 扫码登录在手机上确认后提示「QR login succeeded without a session」、无法登录：B 站改为只通过 `Set-Cookie` 下发登录凭据，插件现在从响应头读取。
+
+### 新增
+
+- Windows 安装程序 `obs-bililive-*-windows-x64-setup.exe`：默认装到 OBS 插件目录，再次运行即升级，OBS 开着时提示关闭，可在「已安装的应用」里卸载。
+- 启动时检查 GitHub 上的新版本，有新版本时在「B站直播」菜单和弹幕区提示。
+
 ## [0.3.1]
 
 ### 新增
@@ -49,7 +60,8 @@
 - 在面板里发送弹幕。
 - 简体中文和英文界面。
 
-[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.3.1...HEAD
+[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.4.0...HEAD
+[0.4.0]: https://github.com/VOfficial404/obs-bililive/compare/0.3.1...0.4.0
 [0.3.1]: https://github.com/VOfficial404/obs-bililive/compare/0.3.0...0.3.1
 [0.3.0]: https://github.com/VOfficial404/obs-bililive/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/VOfficial404/obs-bililive/compare/0.1.0...0.2.0

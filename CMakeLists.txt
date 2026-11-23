@@ -36,6 +36,7 @@ target_sources(
     src/danmaku/events.cpp
     src/danmaku/packet.cpp
     src/danmaku/protobuf.cpp
+    src/update.cpp
 )
 target_include_directories(bililive-core PUBLIC src)
 target_link_libraries(bililive-core PUBLIC Qt6::Core Qt6::Network CURL::libcurl qrcodegen)

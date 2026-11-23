@@ -21,6 +21,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "stream-control.hpp"
 #include "ui/overlay.hpp"
 #include "ui/qr-dialog.hpp"
+#include "update.hpp"
 
 #include <obs-module.h>
 #include <plugin-support.h>
@@ -210,6 +211,7 @@ BiliDock::BiliDock(QWidget *parent)
 	createOverlay();
 	buildUi();
 	registerHotkeys();
+	checkForUpdate();
 	obs_frontend_add_event_callback(onFrontendEvent, this);
 
 	if (settings_.credentials.loggedIn())
@@ -454,6 +456,7 @@ QToolButton *BiliDock::buildMenuButton()
 	button->setPopupMode(QToolButton::InstantPopup);
 	// One menu serves both the ⋯ button and OBS's menu bar, so checkable items stay in sync.
 	auto *menu = new QMenu(T("Menu.Title"), this);
+	menu_ = menu;
 
 	connect(menu->addAction(T("Menu.ShowDock")), &QAction::triggered, this, &BiliDock::showDock);
 	liveAction_ = menu->addAction(T("Live.Start"));
@@ -519,6 +522,23 @@ void BiliDock::showDock()
 			return;
 		}
 	}
+}
+
+void BiliDock::checkForUpdate()
+{
+	runner_.run([]() { return fetchLatestRelease(); },
+		    [this](const LatestRelease &release) {
+			    const QString current = QString::fromUtf8(PLUGIN_VERSION);
+			    if (release.version.isEmpty() || !isNewerVersion(release.version, current))
+				    return;
+			    const QString text = T("Update.Available").arg(release.version);
+			    QAction *action = new QAction(text, menu_);
+			    connect(action, &QAction::triggered, this,
+				    [url = release.url]() { QDesktopServices::openUrl(QUrl(url)); });
+			    menu_->insertAction(menu_->actions().value(0), action);
+			    menu_->insertSeparator(menu_->actions().value(1));
+			    appendSystem(T("Update.Notice").arg(release.version, current), kColorGift);
+		    });
 }
 
 /* Danmaku overlay */

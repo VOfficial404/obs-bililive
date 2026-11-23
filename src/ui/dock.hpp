@@ -96,6 +96,7 @@ private:
 	void copyToClipboard(const QString &text);
 	void installMenuBarMenu(QMenu *menu);
 	void showDock();
+	void checkForUpdate();
 
 	void onLiveEvent(const danmaku::LiveEvent &event);
 	void onDanmakuState(danmaku::DanmakuClient::State state, const QString &detail);
@@ -152,6 +153,7 @@ private:
 	QPushButton *sendButton_ = nullptr;
 
 	std::unique_ptr<DanmakuOverlay> overlay_; // top-level on purpose, see DanmakuOverlay
+	QMenu *menu_ = nullptr;                   // shared by the ⋯ button and the menu bar
 	QAction *liveAction_ = nullptr;           // go live / end broadcast in the shared menu
 	QAction *overlayShowAction_ = nullptr;
 	QAction *overlayLockAction_ = nullptr;
