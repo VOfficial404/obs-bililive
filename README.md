@@ -50,7 +50,7 @@ B 站规定粉丝数不足 5000 的主播只能用「哔哩哔哩直播姬」开
 
 Steam 版请不要把插件放进 Steam 的 OBS 安装目录。每种情况的详细步骤、怎么判断自己用的是哪个版本、装了却看不到面板怎么办，见 **[安装指南](docs/INSTALL.md)**。
 
-装好后重启 OBS，在菜单 **停靠窗口 → B站直播** 打开面板。
+装好后重启 OBS，顶栏「工具」和「帮助」之间会多出一个 **B站直播** 菜单，点 **B站直播 → 显示面板** 打开面板（也可以在 **停靠窗口 → B站直播** 里打开）。
 
 ## 使用
 
@@ -59,8 +59,9 @@ Steam 版请不要把插件放进 Steam 的 OBS 安装目录。每种情况的�
 3. 点 **开始直播**。插件向 B 站申请开播，把推流地址写进 OBS，然后开始推流。
 4. 播完点 **结束直播**，或者直接在 OBS 里点「停止直播」。
 
-面板右上角的 **⋯** 菜单里可以：
+顶栏的 **B站直播** 菜单和面板右上角的 **⋯** 菜单内容相同，可以：
 
+- 显示面板、开始或结束直播；
 - 关掉「开播后自动开始推流」，改为手动点 OBS 的「开始直播」；
 - 关掉「OBS 停止推流时自动关播」，断流重推时直播间不会下播；
 - 隐藏进场和礼物消息；
@@ -154,6 +155,6 @@ ctest --test-dir build_x86_64
 
 Features: QR-code login, title and category, one-click go live / end broadcast (synced with OBS's own Start/Stop Streaming), face verification by QR code, a live feed of danmaku, gifts, Super Chats, guard purchases, follows and entries, viewer statistics, sending danmaku, and an always-on-top, click-through danmaku overlay for reading chat in-game (kept out of display capture on Windows 10 2004+, with OBS hotkeys to show and lock it).
 
-Install the package for your platform from [Releases](https://github.com/VOfficial404/obs-bililive/releases/latest), restart OBS and open **Docks → Bilibili Live**. Requires OBS Studio 31 or newer; the website, Steam and portable builds are all supported. On Windows (website and Steam builds) put the `obs-bililive` folder in `C:\ProgramData\obs-studio\plugins\`, not in the OBS or Steam install directory. Details for every build are in the [install guide](docs/INSTALL.md) (Chinese).
+Install the package for your platform from [Releases](https://github.com/VOfficial404/obs-bililive/releases/latest), restart OBS and use the new **Bilibili Live** menu in the menu bar (between Tools and Help) → **Show panel**. Requires OBS Studio 31 or newer; the website, Steam and portable builds are all supported. On Windows (website and Steam builds) put the `obs-bililive` folder in `C:\ProgramData\obs-studio\plugins\`, not in the OBS or Steam install directory. Details for every build are in the [install guide](docs/INSTALL.md) (Chinese).
 
 This is an unofficial tool, not affiliated with Bilibili. Using it may breach Bilibili's terms of service; you use it at your own risk. Session cookies are stored in plain text in `plugin_config/obs-bililive/config.json` under the OBS configuration directory.

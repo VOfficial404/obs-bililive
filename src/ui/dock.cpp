@@ -30,12 +30,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDesktopServices>
+#include <QDockWidget>
 #include <QFormLayout>
 #include <QFrame>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMainWindow>
+#include <QMenuBar>
 #include <QMenu>
 #include <QPushButton>
 #include <QStackedWidget>
@@ -449,8 +452,13 @@ QToolButton *BiliDock::buildMenuButton()
 	button->setText(QStringLiteral("⋯"));
 	button->setObjectName(QStringLiteral("bililiveMenu"));
 	button->setPopupMode(QToolButton::InstantPopup);
-	auto *menu = new QMenu(button);
+	// One menu serves both the ⋯ button and OBS's menu bar, so checkable items stay in sync.
+	auto *menu = new QMenu(T("Menu.Title"), this);
 
+	connect(menu->addAction(T("Menu.ShowDock")), &QAction::triggered, this, &BiliDock::showDock);
+	liveAction_ = menu->addAction(T("Live.Start"));
+	connect(liveAction_, &QAction::triggered, this, [this]() { live_ ? stopLive() : startLive(); });
+	menu->addSeparator();
 	const auto addToggle = [this, menu](const char *key, bool PluginSettings::*field) {
 		QAction *action = menu->addAction(T(key));
 		action->setCheckable(true);
@@ -484,7 +492,33 @@ QToolButton *BiliDock::buildMenuButton()
 	connect(menu->addAction(T("Menu.Logout")), &QAction::triggered, this, &BiliDock::logout);
 
 	button->setMenu(menu);
+	installMenuBarMenu(menu);
 	return button;
+}
+
+void BiliDock::installMenuBarMenu(QMenu *menu)
+{
+	auto *window = qobject_cast<QMainWindow *>(static_cast<QWidget *>(obs_frontend_get_main_window()));
+	if (!window)
+		return;
+	// Sit between Tools and Help; OBS names its Help menu in OBSBasic.ui.
+	QMenuBar *bar = window->menuBar();
+	if (auto *help = bar->findChild<QMenu *>(QStringLiteral("menuBasic_MainMenu_Help")))
+		bar->insertMenu(help->menuAction(), menu);
+	else
+		bar->addMenu(menu);
+}
+
+void BiliDock::showDock()
+{
+	// OBS wraps the widget in a QDockWidget; the wrapper is what gets hidden when the dock is closed.
+	for (QWidget *widget = parentWidget(); widget; widget = widget->parentWidget()) {
+		if (auto *dock = qobject_cast<QDockWidget *>(widget)) {
+			dock->show();
+			dock->raise();
+			return;
+		}
+	}
 }
 
 /* Danmaku overlay */
@@ -1026,12 +1060,15 @@ void BiliDock::setLive(bool live)
 	parentArea_->setEnabled(!live);
 	childArea_->setEnabled(!live);
 	liveButton_->setEnabled(!busy_ && room_.roomId != 0);
+	liveAction_->setText(liveButton_->text());
+	liveAction_->setEnabled(liveButton_->isEnabled());
 }
 
 void BiliDock::setBusy(bool busy, const QString &status)
 {
 	busy_ = busy;
 	liveButton_->setEnabled(!busy && room_.roomId != 0);
+	liveAction_->setEnabled(liveButton_->isEnabled());
 	status_->setText(status);
 	status_->setVisible(!status.isEmpty());
 }

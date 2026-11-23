@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [0.3.1]
+
+### 新增
+
+- OBS 顶栏新增「B站直播」菜单，位于「工具」和「帮助」之间：显示面板、开始/结束直播，以及原 ⋯ 菜单里的全部选项。
+
 ## [0.3.0]
 
 ### 变更
@@ -43,7 +49,8 @@
 - 在面板里发送弹幕。
 - 简体中文和英文界面。
 
-[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.3.0...HEAD
+[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.3.1...HEAD
+[0.3.1]: https://github.com/VOfficial404/obs-bililive/compare/0.3.0...0.3.1
 [0.3.0]: https://github.com/VOfficial404/obs-bililive/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/VOfficial404/obs-bililive/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/VOfficial404/obs-bililive/releases/tag/0.1.0
