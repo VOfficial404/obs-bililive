@@ -72,11 +72,9 @@ DanmakuOverlay::DanmakuOverlay(QWidget *parent)
 	// macOS hides tool windows whenever OBS is not the active app, i.e. exactly while gaming.
 	setAttribute(Qt::WA_MacAlwaysShowToolWindow);
 	setWindowTitle(QStringLiteral("obs-bililive"));
+	setObjectName(QStringLiteral("bililiveOverlay"));
 	applyWindowFlags();
 
-	QPalette palette = content_->palette();
-	palette.setColor(QPalette::WindowText, Qt::white);
-	content_->setPalette(palette);
 	content_->setAttribute(Qt::WA_TransparentForMouseEvents);
 
 	// Keeps the text readable on bright game scenes even with a fully transparent background.
@@ -86,8 +84,8 @@ DanmakuOverlay::DanmakuOverlay(QWidget *parent)
 	shadow->setColor(QColor(0, 0, 0, 230));
 	content_->setGraphicsEffect(shadow);
 
-	header_->setStyleSheet(QStringLiteral("color:#d0d0d0"));
-	hint_->setStyleSheet(QStringLiteral("color:#c0c0c0"));
+	header_->setObjectName(QStringLiteral("bililiveOverlayMuted"));
+	hint_->setObjectName(QStringLiteral("bililiveOverlayMuted"));
 	header_->hide();
 	hint_->hide();
 
@@ -176,9 +174,12 @@ void DanmakuOverlay::setBackgroundOpacity(int percent)
 
 void DanmakuOverlay::setFontPixelSize(int pixels)
 {
-	QFont font = content_->font();
-	font.setPixelSize(pixels);
-	content_->setFont(font);
+	// OBS themes style every QWidget (font-size, colour) through the application style sheet, which beats
+	// setFont() and palettes; a style sheet on the overlay itself is more specific and wins.
+	setStyleSheet(
+		QStringLiteral("#bililiveOverlay QLabel { color: #ffffff; background: transparent; font-size: %1px; }"
+			       "#bililiveOverlay QLabel#bililiveOverlayMuted { color: #c8c8c8; }")
+			.arg(pixels));
 	trimLines();
 }
 
