@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+## [0.6.0]
+
+### 新增
+
+- 面板里可以修改直播间公告（最多 60 字，留空即清除）。
+
+### 修复
+
+- 弹幕悬浮窗的「字号」设置不起作用：OBS 主题的样式表会覆盖悬浮窗的字号和文字颜色（浅色主题下会变成深色字），悬浮窗现在使用自己的样式。
+
 ## [0.5.0]
 
 ### 新增
@@ -68,7 +78,8 @@
 - 在面板里发送弹幕。
 - 简体中文和英文界面。
 
-[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.5.0...HEAD
+[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.6.0...HEAD
+[0.6.0]: https://github.com/VOfficial404/obs-bililive/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/VOfficial404/obs-bililive/compare/0.4.0...0.5.0
 [0.4.0]: https://github.com/VOfficial404/obs-bililive/compare/0.3.1...0.4.0
 [0.3.1]: https://github.com/VOfficial404/obs-bililive/compare/0.3.0...0.3.1

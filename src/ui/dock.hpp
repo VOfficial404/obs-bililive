@@ -89,6 +89,7 @@ private:
 	void startLive();
 	void stopLive();
 	void saveTitle();
+	void saveNews();
 	void loadCover(const QString &url);
 	void setCoverImage(const QImage &image);
 	void chooseCover();
@@ -140,6 +141,7 @@ private:
 	QWidget *noRoomPanel_ = nullptr;
 	QWidget *roomPanel_ = nullptr;
 	QLineEdit *titleEdit_ = nullptr;
+	QLineEdit *newsEdit_ = nullptr;
 	QComboBox *parentArea_ = nullptr;
 	QComboBox *childArea_ = nullptr;
 	QPushButton *liveButton_ = nullptr;

@@ -318,6 +318,10 @@ RoomInfo BiliApi::fetchRoomOfUser(qint64 uid)
 	room.parentAreaId = static_cast<int>(jsonInt(data.value(QLatin1String("parent_area_id"))));
 	room.liveStatus = static_cast<int>(jsonInt(data.value(QLatin1String("live_status"))));
 	room.coverUrl = data.value(QLatin1String("user_cover")).toString();
+	// A missing announcement is not worth failing the room load over.
+	const ApiResult news = perform(webRequest("https://api.live.bilibili.com/room_ex/v1/RoomNews/get?roomid=" +
+						  QByteArray::number(room.roomId)));
+	room.news = news.object().value(QLatin1String("content")).toString();
 	return room;
 }
 
@@ -361,6 +365,19 @@ ApiResult BiliApi::updateTitle(qint64 roomId, const QString &title)
 				   {QStringLiteral("title"), title},
 				   {QStringLiteral("csrf"), csrf},
 				   {QStringLiteral("csrf_token"), csrf}});
+	return perform(request);
+}
+
+ApiResult BiliApi::updateRoomNews(qint64 roomId, qint64 uid, const QString &content)
+{
+	const QString csrf = credentials().biliJct;
+	HttpRequest request = webRequest("https://api.live.bilibili.com/xlive/app-blink/v1/index/updateRoomNews");
+	request.post = true;
+	request.body = encodeForm({{QStringLiteral("room_id"), QString::number(roomId)},
+				   {QStringLiteral("uid"), QString::number(uid)},
+				   {QStringLiteral("content"), content},
+				   {QStringLiteral("csrf_token"), csrf},
+				   {QStringLiteral("csrf"), csrf}});
 	return perform(request);
 }
 

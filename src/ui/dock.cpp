@@ -456,6 +456,17 @@ QWidget *BiliDock::buildMainPage()
 	titleRow->addWidget(titleEdit_, 1);
 	titleRow->addWidget(saveTitle);
 
+	// Room announcement (直播间公告), shown on the room page; Bilibili caps it at 60 characters.
+	newsEdit_ = new QLineEdit(roomPanel_);
+	newsEdit_->setMaxLength(60);
+	newsEdit_->setPlaceholderText(T("News.Placeholder"));
+	auto *saveNews = new QPushButton(T("Title.Save"), roomPanel_);
+	connect(saveNews, &QPushButton::clicked, this, &BiliDock::saveNews);
+	connect(newsEdit_, &QLineEdit::returnPressed, this, &BiliDock::saveNews);
+	auto *newsRow = new QHBoxLayout();
+	newsRow->addWidget(newsEdit_, 1);
+	newsRow->addWidget(saveNews);
+
 	parentArea_ = new QComboBox(roomPanel_);
 	childArea_ = new QComboBox(roomPanel_);
 	connect(parentArea_, &QComboBox::currentIndexChanged, this, [this]() { populateChildAreas(settings_.areaId); });
@@ -471,6 +482,7 @@ QWidget *BiliDock::buildMainPage()
 	form->setContentsMargins(0, 0, 0, 0);
 	form->addRow(T("Title.Label"), titleRow);
 	form->addRow(T("Area.Label"), areaRow);
+	form->addRow(T("News.Label"), newsRow);
 
 	liveButton_ = new QPushButton(T("Live.Start"), roomPanel_);
 	liveButton_->setObjectName(QStringLiteral("bililivePrimary"));
@@ -961,6 +973,7 @@ void BiliDock::loadAccount()
 				return;
 
 			titleEdit_->setText(room_.title);
+			newsEdit_->setText(room_.news);
 			if (settings_.areaId == 0)
 				settings_.areaId = room_.areaId;
 			populateAreas();
@@ -1181,6 +1194,25 @@ void BiliDock::saveTitle()
 			    }
 			    room_.title = title;
 			    appendSystem(T("Title.Saved").arg(title), kColorSystem);
+		    });
+}
+
+void BiliDock::saveNews()
+{
+	const QString news = newsEdit_->text().trimmed();
+	if (room_.roomId == 0 || news == room_.news)
+		return;
+	const qint64 roomId = room_.roomId;
+	const qint64 uid = user_.uid;
+	const auto api = api_;
+	runner_.run([api, roomId, uid, news]() { return api->updateRoomNews(roomId, uid, news); },
+		    [this, news](const ApiResult &result) {
+			    if (!result.ok()) {
+				    appendError(result);
+				    return;
+			    }
+			    room_.news = news;
+			    appendSystem(news.isEmpty() ? T("News.Cleared") : T("News.Saved").arg(news), kColorSystem);
 		    });
 }
 

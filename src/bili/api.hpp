@@ -85,6 +85,7 @@ struct RoomInfo {
 	int parentAreaId = 0;
 	int liveStatus = 0; // 0 offline, 1 live, 2 replaying
 	QString coverUrl;   // empty when the room has no cover
+	QString news;       // room announcement (直播间公告)
 };
 
 struct Area {
@@ -139,6 +140,8 @@ public:
 	ApiResult createRoom();
 
 	ApiResult updateTitle(qint64 roomId, const QString &title);
+	// Room announcement; at most 60 characters, empty clears it.
+	ApiResult updateRoomNews(qint64 roomId, qint64 uid, const QString &content);
 	// Raw bytes of an image on Bilibili's CDN; empty on failure.
 	QByteArray downloadImage(const QString &url);
 	// Uploads a JPEG/PNG as the room cover; Bilibili reviews it before viewers see it.
