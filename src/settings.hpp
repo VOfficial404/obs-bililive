@@ -29,6 +29,14 @@ struct PluginSettings {
 	bool showEnter = true;
 	bool showGifts = true;
 	int areaId = 0;
+
+	bool overlayVisible = false;
+	bool overlayLocked = false;           // click-through
+	bool overlayHiddenFromCapture = true; // keep it off the stream when display capture is used
+	int overlayOpacity = 40;              // background, percent
+	int overlayFontSize = 16;             // pixels
+	QByteArray overlayGeometry;           // QWidget::saveGeometry()
+	QByteArray hotkeys;                   // JSON object: hotkey name -> obs_hotkey_save() array
 };
 
 // Stored as JSON in the plugin's config directory.

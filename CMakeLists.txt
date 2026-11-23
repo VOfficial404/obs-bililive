@@ -60,7 +60,13 @@ set_target_properties(
 
 target_sources(
   ${CMAKE_PROJECT_NAME}
-  PRIVATE src/plugin-main.cpp src/settings.cpp src/stream-control.cpp src/ui/dock.cpp src/ui/qr-dialog.cpp
+  PRIVATE
+    src/plugin-main.cpp
+    src/settings.cpp
+    src/stream-control.cpp
+    src/ui/dock.cpp
+    src/ui/overlay.cpp
+    src/ui/qr-dialog.cpp
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

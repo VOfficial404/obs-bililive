@@ -53,6 +53,11 @@ PluginSettings loadSettings()
 	obs_data_set_default_bool(data, "auto_stop_live", settings.autoStopLive);
 	obs_data_set_default_bool(data, "show_enter", settings.showEnter);
 	obs_data_set_default_bool(data, "show_gifts", settings.showGifts);
+	obs_data_set_default_bool(data, "overlay_visible", settings.overlayVisible);
+	obs_data_set_default_bool(data, "overlay_locked", settings.overlayLocked);
+	obs_data_set_default_bool(data, "overlay_hidden_from_capture", settings.overlayHiddenFromCapture);
+	obs_data_set_default_int(data, "overlay_opacity", settings.overlayOpacity);
+	obs_data_set_default_int(data, "overlay_font_size", settings.overlayFontSize);
 
 	settings.credentials.sessdata = getString(data, "sessdata");
 	settings.credentials.biliJct = getString(data, "bili_jct");
@@ -63,6 +68,16 @@ PluginSettings loadSettings()
 	settings.showEnter = obs_data_get_bool(data, "show_enter");
 	settings.showGifts = obs_data_get_bool(data, "show_gifts");
 	settings.areaId = static_cast<int>(obs_data_get_int(data, "area_id"));
+	settings.overlayVisible = obs_data_get_bool(data, "overlay_visible");
+	settings.overlayLocked = obs_data_get_bool(data, "overlay_locked");
+	settings.overlayHiddenFromCapture = obs_data_get_bool(data, "overlay_hidden_from_capture");
+	settings.overlayOpacity = static_cast<int>(obs_data_get_int(data, "overlay_opacity"));
+	settings.overlayFontSize = static_cast<int>(obs_data_get_int(data, "overlay_font_size"));
+	settings.overlayGeometry = QByteArray::fromBase64(obs_data_get_string(data, "overlay_geometry"));
+	if (obs_data_t *hotkeys = obs_data_get_obj(data, "hotkeys")) {
+		settings.hotkeys = obs_data_get_json(hotkeys);
+		obs_data_release(hotkeys);
+	}
 	obs_data_release(data);
 	return settings;
 }
@@ -88,6 +103,17 @@ void saveSettings(const PluginSettings &settings)
 	obs_data_set_bool(data, "show_enter", settings.showEnter);
 	obs_data_set_bool(data, "show_gifts", settings.showGifts);
 	obs_data_set_int(data, "area_id", settings.areaId);
+	obs_data_set_bool(data, "overlay_visible", settings.overlayVisible);
+	obs_data_set_bool(data, "overlay_locked", settings.overlayLocked);
+	obs_data_set_bool(data, "overlay_hidden_from_capture", settings.overlayHiddenFromCapture);
+	obs_data_set_int(data, "overlay_opacity", settings.overlayOpacity);
+	obs_data_set_int(data, "overlay_font_size", settings.overlayFontSize);
+	obs_data_set_string(data, "overlay_geometry", settings.overlayGeometry.toBase64().constData());
+	if (!settings.hotkeys.isEmpty()) {
+		obs_data_t *hotkeys = obs_data_create_from_json(settings.hotkeys.constData());
+		obs_data_set_obj(data, "hotkeys", hotkeys);
+		obs_data_release(hotkeys);
+	}
 	if (!obs_data_save_json_safe(data, path, "tmp", "bak"))
 		obs_log(LOG_WARNING, "failed to save %s", path);
 	obs_data_release(data);

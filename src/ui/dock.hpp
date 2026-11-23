@@ -24,6 +24,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "settings.hpp"
 
 #include <obs-frontend-api.h>
+#include <obs-hotkey.h>
 
 #include <QPointer>
 #include <QTimer>
@@ -34,6 +35,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 class QComboBox;
 class QLabel;
 class QLineEdit;
+class QMenu;
 class QPushButton;
 class QStackedWidget;
 class QTextBrowser;
@@ -41,6 +43,7 @@ class QToolButton;
 
 namespace bililive {
 
+class DanmakuOverlay;
 class QrDialog;
 
 class BiliDock : public QWidget {
@@ -61,6 +64,15 @@ private:
 	QWidget *buildLoginPage();
 	QWidget *buildMainPage();
 	QToolButton *buildMenuButton();
+	QMenu *buildOverlayMenu(QWidget *parent);
+
+	void createOverlay();
+	void setOverlayVisible(bool visible);
+	void setOverlayLocked(bool locked);
+	void applyOverlayCaptureSetting();
+	void registerHotkeys();
+	void storeHotkeys();
+	static void onOverlayHotkey(void *data, obs_hotkey_id id, obs_hotkey_t *hotkey, bool pressed);
 
 	void beginLogin();
 	void openQrDialog(QrPurpose purpose, const QString &title, const QString &hint, const QString &content);
@@ -125,6 +137,13 @@ private:
 	QTextBrowser *feed_ = nullptr;
 	QLineEdit *sendEdit_ = nullptr;
 	QPushButton *sendButton_ = nullptr;
+
+	std::unique_ptr<DanmakuOverlay> overlay_; // top-level on purpose, see DanmakuOverlay
+	QAction *overlayShowAction_ = nullptr;
+	QAction *overlayLockAction_ = nullptr;
+	QTimer overlayGeometryTimer_;
+	obs_hotkey_id overlayToggleHotkey_ = OBS_INVALID_HOTKEY_ID;
+	obs_hotkey_id overlayLockHotkey_ = OBS_INVALID_HOTKEY_ID;
 
 	AsyncRunner runner_{this}; // last: waits for workers before the members above go away
 };

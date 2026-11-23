@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "ui/dock.hpp"
 
 #include "stream-control.hpp"
+#include "ui/overlay.hpp"
 #include "ui/qr-dialog.hpp"
 
 #include <obs-module.h>
@@ -31,6 +32,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QActionGroup>
 #include <QMenu>
 #include <QPushButton>
 #include <QStackedWidget>
@@ -50,6 +52,12 @@ constexpr int kQrPollMs = 1500;
 constexpr int kFeedMaxLines = 1000;
 constexpr int kAlreadyHasRoom = 1531193016;
 constexpr long kExitStopTimeoutSeconds = 5;
+constexpr int kOverlayGeometrySaveMs = 500;
+constexpr int kOverlayOpacities[] = {0, 25, 40, 60, 80};
+constexpr int kOverlayFontSizes[] = {14, 16, 20, 24};
+
+constexpr const char *kHotkeyOverlayToggle = "obs_bililive.overlay_toggle";
+constexpr const char *kHotkeyOverlayLock = "obs_bililive.overlay_lock";
 
 constexpr const char *kColorTime = "#8a8a8a";
 constexpr const char *kColorUser = "#4fa3e0";
@@ -97,7 +105,9 @@ BiliDock::BiliDock(QWidget *parent)
 	connect(danmaku_, &danmaku::DanmakuClient::liveEvent, this, &BiliDock::onLiveEvent);
 	connect(danmaku_, &danmaku::DanmakuClient::stateChanged, this, &BiliDock::onDanmakuState);
 
+	createOverlay();
 	buildUi();
+	registerHotkeys();
 	obs_frontend_add_event_callback(onFrontendEvent, this);
 
 	if (settings_.credentials.loggedIn())
@@ -109,6 +119,8 @@ BiliDock::BiliDock(QWidget *parent)
 BiliDock::~BiliDock()
 {
 	obs_frontend_remove_event_callback(onFrontendEvent, this);
+	obs_hotkey_unregister(overlayToggleHotkey_);
+	obs_hotkey_unregister(overlayLockHotkey_);
 	danmaku_->stop();
 	runner_.waitForDone();
 }
@@ -141,6 +153,8 @@ void BiliDock::onStreamingStopped()
 void BiliDock::onExit()
 {
 	danmaku_->stop();
+	overlay_->hide();
+	persist(); // picks up hotkeys changed in OBS's settings
 	// The event loop is going away, so end the broadcast synchronously.
 	if (live_ && settings_.autoStopLive && room_.roomId != 0) {
 		const ApiResult result = api_->stopLive(room_.roomId, kExitStopTimeoutSeconds);
@@ -297,6 +311,8 @@ QToolButton *BiliDock::buildMenuButton()
 	addToggle("Menu.ShowEnter", &PluginSettings::showEnter);
 	addToggle("Menu.ShowGifts", &PluginSettings::showGifts);
 	menu->addSeparator();
+	menu->addMenu(buildOverlayMenu(menu));
+	menu->addSeparator();
 	connect(menu->addAction(T("Menu.OpenRoom")), &QAction::triggered, this, [this]() {
 		if (room_.roomId != 0)
 			QDesktopServices::openUrl(
@@ -307,6 +323,164 @@ QToolButton *BiliDock::buildMenuButton()
 
 	button->setMenu(menu);
 	return button;
+}
+
+/* Danmaku overlay */
+
+QMenu *BiliDock::buildOverlayMenu(QWidget *parent)
+{
+	auto *menu = new QMenu(T("Overlay.Menu"), parent);
+
+	overlayShowAction_ = menu->addAction(T("Overlay.Show"));
+	overlayShowAction_->setCheckable(true);
+	overlayShowAction_->setChecked(settings_.overlayVisible);
+	connect(overlayShowAction_, &QAction::toggled, this, &BiliDock::setOverlayVisible);
+
+	overlayLockAction_ = menu->addAction(T("Overlay.Lock"));
+	overlayLockAction_->setCheckable(true);
+	overlayLockAction_->setChecked(settings_.overlayLocked);
+	connect(overlayLockAction_, &QAction::toggled, this, &BiliDock::setOverlayLocked);
+
+	if (DanmakuOverlay::canHideFromCapture()) {
+		QAction *capture = menu->addAction(T("Overlay.HideFromCapture"));
+		capture->setCheckable(true);
+		capture->setChecked(settings_.overlayHiddenFromCapture);
+		connect(capture, &QAction::toggled, this, [this](bool checked) {
+			settings_.overlayHiddenFromCapture = checked;
+			applyOverlayCaptureSetting();
+			persist();
+		});
+	}
+
+	menu->addSection(T("Overlay.Opacity"));
+	auto *opacityGroup = new QActionGroup(menu);
+	for (int percent : kOverlayOpacities) {
+		QAction *action = menu->addAction(QStringLiteral("%1%").arg(percent));
+		action->setCheckable(true);
+		action->setChecked(percent == settings_.overlayOpacity);
+		opacityGroup->addAction(action);
+		connect(action, &QAction::triggered, this, [this, percent]() {
+			settings_.overlayOpacity = percent;
+			overlay_->setBackgroundOpacity(percent);
+			persist();
+		});
+	}
+
+	menu->addSection(T("Overlay.FontSize"));
+	auto *fontGroup = new QActionGroup(menu);
+	for (int pixels : kOverlayFontSizes) {
+		QAction *action = menu->addAction(QStringLiteral("%1 px").arg(pixels));
+		action->setCheckable(true);
+		action->setChecked(pixels == settings_.overlayFontSize);
+		fontGroup->addAction(action);
+		connect(action, &QAction::triggered, this, [this, pixels]() {
+			settings_.overlayFontSize = pixels;
+			overlay_->setFontPixelSize(pixels);
+			persist();
+		});
+	}
+	return menu;
+}
+
+void BiliDock::createOverlay()
+{
+	overlay_ = std::make_unique<DanmakuOverlay>();
+	overlay_->setHint(T("Overlay.Hint"));
+	overlay_->setBackgroundOpacity(settings_.overlayOpacity);
+	overlay_->setFontPixelSize(settings_.overlayFontSize);
+	overlay_->setLocked(settings_.overlayLocked);
+	if (!settings_.overlayGeometry.isEmpty())
+		overlay_->restoreGeometry(settings_.overlayGeometry);
+	applyOverlayCaptureSetting();
+
+	overlayGeometryTimer_.setSingleShot(true);
+	overlayGeometryTimer_.setInterval(kOverlayGeometrySaveMs);
+	connect(&overlayGeometryTimer_, &QTimer::timeout, this, [this]() {
+		settings_.overlayGeometry = overlay_->saveGeometry();
+		persist();
+	});
+	connect(overlay_.get(), &DanmakuOverlay::geometryEdited, &overlayGeometryTimer_, qOverload<>(&QTimer::start));
+
+	if (settings_.overlayVisible)
+		overlay_->show();
+}
+
+void BiliDock::setOverlayVisible(bool visible)
+{
+	settings_.overlayVisible = visible;
+	overlay_->setVisible(visible);
+	if (visible)
+		applyOverlayCaptureSetting();
+	if (overlayShowAction_)
+		overlayShowAction_->setChecked(visible);
+	persist();
+}
+
+void BiliDock::setOverlayLocked(bool locked)
+{
+	settings_.overlayLocked = locked;
+	overlay_->setLocked(locked);
+	applyOverlayCaptureSetting();
+	if (overlayLockAction_)
+		overlayLockAction_->setChecked(locked);
+	persist();
+}
+
+void BiliDock::applyOverlayCaptureSetting()
+{
+	if (!DanmakuOverlay::canHideFromCapture())
+		return;
+	if (!overlay_->setHiddenFromCapture(settings_.overlayHiddenFromCapture))
+		obs_log(LOG_WARNING, "SetWindowDisplayAffinity failed; the overlay may show up in display capture");
+}
+
+void BiliDock::registerHotkeys()
+{
+	overlayToggleHotkey_ = obs_hotkey_register_frontend(
+		kHotkeyOverlayToggle, obs_module_text("Hotkey.OverlayToggle"), onOverlayHotkey, this);
+	overlayLockHotkey_ = obs_hotkey_register_frontend(kHotkeyOverlayLock, obs_module_text("Hotkey.OverlayLock"),
+							  onOverlayHotkey, this);
+	if (settings_.hotkeys.isEmpty())
+		return;
+
+	obs_data_t *data = obs_data_create_from_json(settings_.hotkeys.constData());
+	for (const auto &[id, name] : {std::pair{overlayToggleHotkey_, kHotkeyOverlayToggle},
+				       std::pair{overlayLockHotkey_, kHotkeyOverlayLock}}) {
+		obs_data_array_t *bindings = obs_data_get_array(data, name);
+		obs_hotkey_load(id, bindings);
+		obs_data_array_release(bindings);
+	}
+	obs_data_release(data);
+}
+
+void BiliDock::storeHotkeys()
+{
+	obs_data_t *data = obs_data_create();
+	for (const auto &[id, name] : {std::pair{overlayToggleHotkey_, kHotkeyOverlayToggle},
+				       std::pair{overlayLockHotkey_, kHotkeyOverlayLock}}) {
+		obs_data_array_t *bindings = obs_hotkey_save(id);
+		obs_data_set_array(data, name, bindings);
+		obs_data_array_release(bindings);
+	}
+	settings_.hotkeys = obs_data_get_json(data);
+	obs_data_release(data);
+}
+
+void BiliDock::onOverlayHotkey(void *data, obs_hotkey_id id, obs_hotkey_t *, bool pressed)
+{
+	if (!pressed)
+		return;
+	// Hotkeys fire on OBS's hotkey thread.
+	auto *dock = static_cast<BiliDock *>(data);
+	QMetaObject::invokeMethod(
+		dock,
+		[dock, id]() {
+			if (id == dock->overlayToggleHotkey_)
+				dock->setOverlayVisible(!dock->settings_.overlayVisible);
+			else if (id == dock->overlayLockHotkey_)
+				dock->setOverlayLocked(!dock->settings_.overlayLocked);
+		},
+		Qt::QueuedConnection);
 }
 
 /* Login */
@@ -422,6 +596,7 @@ void BiliDock::logout()
 	room_ = {};
 	setLive(false);
 	feed_->clear();
+	overlay_->clearLines();
 	pages_->setCurrentIndex(0);
 }
 
@@ -693,6 +868,8 @@ void BiliDock::setBusy(bool busy, const QString &status)
 
 void BiliDock::persist()
 {
+	if (overlayToggleHotkey_ != OBS_INVALID_HOTKEY_ID)
+		storeHotkeys();
 	saveSettings(settings_);
 }
 
@@ -796,6 +973,7 @@ void BiliDock::appendLine(const QString &html)
 {
 	const QString time = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm"));
 	feed_->append(span(kColorTime, time) + QLatin1Char(' ') + html);
+	overlay_->appendLine(html);
 }
 
 void BiliDock::appendSystem(const QString &text, const char *color)
@@ -819,6 +997,7 @@ void BiliDock::updateStats()
 	stats_->setText(
 		T("Stats.Format")
 			.arg(countText(watched_), countText(online_), countText(likes_), countText(followers_)));
+	overlay_->setHeader(T("Overlay.Header").arg(countText(online_), countText(watched_)));
 }
 
 } // namespace bililive
