@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [0.3.0]
+
+### 变更
+
+- 面板改成直播姬风格：深色卡片、粉色开播按钮、四格直播数据（大数字按「万」显示）、「直播中」标签。
+- 弹幕列表分为「弹幕 / 礼物 / 醒目留言」三个标签页；粉丝牌按等级上色，醒目留言按金额显示为彩色卡片，上舰高亮。悬浮窗使用同样的样式。
+
+### 新增
+
+- 面板显示房间号，可一键复制；菜单里可复制房间号和直播间链接，方便同时使用 blivechat 等其他弹幕姬。
+
 ## [0.2.0]
 
 ### 新增
@@ -32,6 +43,7 @@
 - 在面板里发送弹幕。
 - 简体中文和英文界面。
 
-[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.2.0...HEAD
+[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/VOfficial404/obs-bililive/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/VOfficial404/obs-bililive/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/VOfficial404/obs-bililive/releases/tag/0.1.0

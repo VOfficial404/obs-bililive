@@ -25,17 +25,22 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 #include <plugin-support.h>
 
+#include <QActionGroup>
+#include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QFormLayout>
+#include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QActionGroup>
 #include <QMenu>
 #include <QPushButton>
 #include <QStackedWidget>
+#include <QStyle>
+#include <QTabWidget>
 #include <QTextBrowser>
 #include <QToolButton>
 #include <QUrl>
@@ -59,16 +64,46 @@ constexpr int kOverlayFontSizes[] = {14, 16, 20, 24};
 constexpr const char *kHotkeyOverlayToggle = "obs_bililive.overlay_toggle";
 constexpr const char *kHotkeyOverlayLock = "obs_bililive.overlay_lock";
 
-constexpr const char *kColorTime = "#8a8a8a";
-constexpr const char *kColorUser = "#4fa3e0";
-constexpr const char *kColorMedal = "#d47fd4";
-constexpr const char *kColorGift = "#e8a33c";
-constexpr const char *kColorSuperChat = "#e25d5d";
-constexpr const char *kColorGuard = "#b46ae0";
-constexpr const char *kColorMuted = "#8a8a8a";
+// LiveHime's look: dark surfaces with the Bilibili pink accent.
+constexpr const char *kColorTime = "#6b6e78";
+constexpr const char *kColorUser = "#8fb7e8";
+constexpr const char *kColorGift = "#ffb027";
+constexpr const char *kColorGuardCard = "#3b2f57";
+constexpr const char *kColorMuted = "#8c8f99";
 constexpr const char *kColorFollow = "#5fb878";
-constexpr const char *kColorSystem = "#3d9ee6";
-constexpr const char *kColorError = "#e05555";
+constexpr const char *kColorSystem = "#4aa8f0";
+constexpr const char *kColorError = "#ff6b6b";
+
+// Scoped to the dock by object name so OBS's own theme stays untouched.
+constexpr const char *kDockStyle = R"(
+#bililiveDock { background-color: #17181c; }
+#bililiveDock QLabel { color: #e6e7eb; }
+#bililiveDock QFrame#bililiveCard { background-color: #23242a; border-radius: 8px; }
+#bililiveDock QLabel#bililiveName { font-size: 15px; font-weight: bold; }
+#bililiveDock QLabel#bililiveMuted { color: #8c8f99; }
+#bililiveDock QLabel#bililivePill { border-radius: 9px; padding: 1px 8px; background-color: #3a3b42; color: #a0a3ab; }
+#bililiveDock QLabel#bililivePill[live="true"] { background-color: #fb7299; color: #ffffff; }
+#bililiveDock QLabel#bililiveStatValue { font-size: 16px; font-weight: bold; }
+#bililiveDock QLabel#bililiveStatCaption { color: #8c8f99; font-size: 11px; }
+#bililiveDock QLineEdit { background-color: #2c2d34; color: #e6e7eb; border: 1px solid #3a3b42; border-radius: 4px; padding: 4px 6px; }
+#bililiveDock QLineEdit:focus { border-color: #fb7299; }
+#bililiveDock QLineEdit:disabled { color: #6b6e78; }
+#bililiveDock QPushButton { background-color: #2c2d34; color: #e6e7eb; border: 1px solid #3a3b42; border-radius: 4px; padding: 4px 12px; }
+#bililiveDock QPushButton:hover { background-color: #35363e; }
+#bililiveDock QPushButton:disabled { color: #6b6e78; }
+#bililiveDock QPushButton#bililivePrimary { background-color: #fb7299; color: #ffffff; border: none; border-radius: 6px; font-size: 14px; font-weight: bold; padding: 8px 12px; }
+#bililiveDock QPushButton#bililivePrimary:hover { background-color: #ff85a8; }
+#bililiveDock QPushButton#bililivePrimary:disabled { background-color: #5a3a47; color: #b8a6ae; }
+#bililiveDock QPushButton#bililivePrimary[live="true"] { background-color: transparent; color: #ff6b6b; border: 1px solid #ff6b6b; }
+#bililiveDock QToolButton { background: transparent; border: none; color: #a0a3ab; padding: 2px 6px; }
+#bililiveDock QToolButton:hover { color: #fb7299; }
+#bililiveDock QToolButton::menu-indicator { image: none; }
+#bililiveDock QToolButton#bililiveMenu { font-size: 18px; font-weight: bold; }
+#bililiveDock QTabWidget::pane { border: none; }
+#bililiveDock QTabBar::tab { background: transparent; color: #8c8f99; border: none; border-bottom: 2px solid transparent; padding: 6px 12px; }
+#bililiveDock QTabBar::tab:selected { color: #fb7299; border-bottom-color: #fb7299; }
+#bililiveDock QTextBrowser { background-color: #1d1e23; color: #e6e7eb; border: none; border-radius: 6px; padding: 4px; }
+)";
 
 QString T(const char *key)
 {
@@ -85,9 +120,73 @@ QString yuan(double amount)
 	return QString::number(amount, 'f', amount < 1 ? 1 : 0);
 }
 
+// Large counts read like LiveHime's (12345 -> 1.2万); the unit comes from the locale.
 QString countText(qint64 value)
 {
-	return value < 0 ? QStringLiteral("-") : QString::number(value);
+	if (value < 0)
+		return QStringLiteral("-");
+	const qint64 unit = qMax<qint64>(T("Stats.LargeUnit").toLongLong(), 1000);
+	if (value < unit)
+		return QString::number(value);
+	return T("Stats.Large").arg(QString::number(static_cast<double>(value) / static_cast<double>(unit), 'f', 1));
+}
+
+// Fan medal colours by level band, as LiveHime draws them.
+QString medalBadge(const QString &name, int level)
+{
+	static constexpr const char *kColors[] = {"#5c968e", "#5d7b9e", "#8d7ca6", "#be6686", "#c79d24",
+						  "#1a544b", "#06154c", "#2d0855", "#7a0423", "#ff610b"};
+	const QLatin1String color(kColors[qBound(0, (qMax(level, 1) - 1) / 4, 9)]);
+	return QStringLiteral("<span style=\"background-color:%1;color:#ffffff\">&nbsp;%2&nbsp;</span>"
+			      "<span style=\"background-color:#ffffff;color:%1\">&nbsp;%3&nbsp;</span>&nbsp;")
+		.arg(color, name.toHtmlEscaped())
+		.arg(level);
+}
+
+// Super Chat card colour by price tier (CNY).
+const char *superChatColor(double amount)
+{
+	if (amount >= 2000)
+		return "#ab1a32";
+	if (amount >= 1000)
+		return "#e54d4d";
+	if (amount >= 500)
+		return "#e09443";
+	if (amount >= 100)
+		return "#e2b52b";
+	if (amount >= 50)
+		return "#427d9e";
+	return "#2a60b2";
+}
+
+QString card(const char *background, const QString &html)
+{
+	return QStringLiteral("<table width=\"100%\" cellpadding=\"6\" cellspacing=\"0\" "
+			      "style=\"background-color:%1\"><tr><td>%2</td></tr></table>")
+		.arg(QLatin1String(background), html);
+}
+
+// Re-applies the style sheet after a dynamic property used in a selector changed.
+void repolish(QWidget *widget)
+{
+	widget->style()->unpolish(widget);
+	widget->style()->polish(widget);
+}
+
+QLabel *addStatTile(QHBoxLayout *row, QWidget *parent, const QString &caption)
+{
+	auto *value = new QLabel(QStringLiteral("-"), parent);
+	value->setObjectName(QStringLiteral("bililiveStatValue"));
+	value->setAlignment(Qt::AlignCenter);
+	auto *label = new QLabel(caption, parent);
+	label->setObjectName(QStringLiteral("bililiveStatCaption"));
+	label->setAlignment(Qt::AlignCenter);
+	auto *column = new QVBoxLayout();
+	column->setSpacing(0);
+	column->addWidget(value);
+	column->addWidget(label);
+	row->addLayout(column, 1);
+	return value;
 }
 
 } // namespace
@@ -168,12 +267,16 @@ void BiliDock::onExit()
 
 void BiliDock::buildUi()
 {
+	setObjectName(QStringLiteral("bililiveDock"));
+	setAttribute(Qt::WA_StyledBackground);
+	setStyleSheet(QLatin1String(kDockStyle));
+
 	pages_ = new QStackedWidget(this);
 	pages_->addWidget(buildLoginPage());
 	pages_->addWidget(buildMainPage());
 
 	auto *layout = new QVBoxLayout(this);
-	layout->setContentsMargins(4, 4, 4, 4);
+	layout->setContentsMargins(6, 6, 6, 6);
 	layout->addWidget(pages_);
 }
 
@@ -181,9 +284,11 @@ QWidget *BiliDock::buildLoginPage()
 {
 	auto *page = new QWidget(this);
 	auto *hint = new QLabel(T("Login.Hint"), page);
+	hint->setObjectName(QStringLiteral("bililiveMuted"));
 	hint->setWordWrap(true);
 	hint->setAlignment(Qt::AlignCenter);
 	auto *button = new QPushButton(T("Login.Button"), page);
+	button->setObjectName(QStringLiteral("bililivePrimary"));
 	connect(button, &QPushButton::clicked, this, &BiliDock::beginLogin);
 
 	auto *layout = new QVBoxLayout(page);
@@ -198,25 +303,69 @@ QWidget *BiliDock::buildMainPage()
 {
 	auto *page = new QWidget(this);
 
-	accountLabel_ = new QLabel(page);
+	// Account card: name, live pill and menu; room number with copy; viewer stats.
+	auto *accountCard = new QFrame(page);
+	accountCard->setObjectName(QStringLiteral("bililiveCard"));
+
+	accountLabel_ = new QLabel(accountCard);
+	accountLabel_->setObjectName(QStringLiteral("bililiveName"));
 	accountLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-	auto *header = new QHBoxLayout();
-	header->addWidget(accountLabel_, 1);
-	header->addWidget(buildMenuButton());
+	liveState_ = new QLabel(accountCard);
+	liveState_->setObjectName(QStringLiteral("bililivePill"));
+	auto *nameRow = new QHBoxLayout();
+	nameRow->addWidget(accountLabel_, 1);
+	nameRow->addWidget(liveState_);
+	nameRow->addWidget(buildMenuButton());
+
+	// Other danmaku tools (blivechat and the like) connect on their own with this number.
+	roomIdRow_ = new QWidget(accountCard);
+	roomIdLabel_ = new QLabel(roomIdRow_);
+	roomIdLabel_->setObjectName(QStringLiteral("bililiveMuted"));
+	roomIdLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	auto *copyRoom = new QToolButton(roomIdRow_);
+	copyRoom->setText(T("Room.Copy"));
+	copyRoom->setToolTip(T("Room.CopyTip"));
+	connect(copyRoom, &QToolButton::clicked, this, [this]() { copyToClipboard(QString::number(room_.roomId)); });
+	danmakuState_ = new QLabel(roomIdRow_);
+	danmakuState_->setObjectName(QStringLiteral("bililiveMuted"));
+	auto *roomIdLayout = new QHBoxLayout(roomIdRow_);
+	roomIdLayout->setContentsMargins(0, 0, 0, 0);
+	roomIdLayout->addWidget(roomIdLabel_);
+	roomIdLayout->addWidget(copyRoom);
+	roomIdLayout->addStretch(1);
+	roomIdLayout->addWidget(danmakuState_);
+	roomIdRow_->hide();
+
+	auto *statsRow = new QHBoxLayout();
+	statOnline_ = addStatTile(statsRow, accountCard, T("Stats.Online"));
+	statWatched_ = addStatTile(statsRow, accountCard, T("Stats.Watched"));
+	statLikes_ = addStatTile(statsRow, accountCard, T("Stats.Likes"));
+	statFollowers_ = addStatTile(statsRow, accountCard, T("Stats.Followers"));
+
+	auto *accountLayout = new QVBoxLayout(accountCard);
+	accountLayout->setContentsMargins(10, 8, 10, 10);
+	accountLayout->setSpacing(6);
+	accountLayout->addLayout(nameRow);
+	accountLayout->addWidget(roomIdRow_);
+	accountLayout->addLayout(statsRow);
 
 	// Shown when the account has never opened a live room.
-	noRoomPanel_ = new QWidget(page);
+	noRoomPanel_ = new QFrame(page);
+	noRoomPanel_->setObjectName(QStringLiteral("bililiveCard"));
 	auto *noRoomLabel = new QLabel(T("Room.None"), noRoomPanel_);
 	noRoomLabel->setWordWrap(true);
 	auto *createButton = new QPushButton(T("Room.Create"), noRoomPanel_);
+	createButton->setObjectName(QStringLiteral("bililivePrimary"));
 	connect(createButton, &QPushButton::clicked, this, &BiliDock::createRoom);
 	auto *noRoomLayout = new QVBoxLayout(noRoomPanel_);
-	noRoomLayout->setContentsMargins(0, 0, 0, 0);
+	noRoomLayout->setContentsMargins(10, 10, 10, 10);
 	noRoomLayout->addWidget(noRoomLabel);
 	noRoomLayout->addWidget(createButton);
 	noRoomPanel_->hide();
 
-	roomPanel_ = new QWidget(page);
+	// Broadcast card: title, category, go live.
+	roomPanel_ = new QFrame(page);
+	roomPanel_->setObjectName(QStringLiteral("bililiveCard"));
 	titleEdit_ = new QLineEdit(roomPanel_);
 	titleEdit_->setMaxLength(40);
 	auto *saveTitle = new QPushButton(T("Title.Save"), roomPanel_);
@@ -243,30 +392,33 @@ QWidget *BiliDock::buildMainPage()
 	form->addRow(T("Area.Label"), areaRow);
 
 	liveButton_ = new QPushButton(T("Live.Start"), roomPanel_);
-	liveButton_->setMinimumHeight(32);
+	liveButton_->setObjectName(QStringLiteral("bililivePrimary"));
 	connect(liveButton_, &QPushButton::clicked, this, [this]() { live_ ? stopLive() : startLive(); });
-	liveState_ = new QLabel(roomPanel_);
-	auto *liveRow = new QHBoxLayout();
-	liveRow->addWidget(liveButton_, 1);
-	liveRow->addWidget(liveState_);
 
 	status_ = new QLabel(roomPanel_);
+	status_->setObjectName(QStringLiteral("bililiveMuted"));
 	status_->setWordWrap(true);
-	stats_ = new QLabel(roomPanel_);
-	danmakuState_ = new QLabel(roomPanel_);
-	danmakuState_->setStyleSheet(QStringLiteral("color:%1").arg(QLatin1String(kColorMuted)));
+	status_->hide();
 
 	auto *roomLayout = new QVBoxLayout(roomPanel_);
-	roomLayout->setContentsMargins(0, 0, 0, 0);
+	roomLayout->setContentsMargins(10, 10, 10, 10);
+	roomLayout->setSpacing(8);
 	roomLayout->addLayout(form);
-	roomLayout->addLayout(liveRow);
+	roomLayout->addWidget(liveButton_);
 	roomLayout->addWidget(status_);
-	roomLayout->addWidget(stats_);
-	roomLayout->addWidget(danmakuState_);
 
-	feed_ = new QTextBrowser(page);
-	feed_->setOpenLinks(false);
-	feed_->document()->setMaximumBlockCount(kFeedMaxLines);
+	auto *tabs = new QTabWidget(page);
+	tabs->setDocumentMode(true);
+	const auto makeFeed = [tabs](const QString &title) {
+		auto *feed = new QTextBrowser(tabs);
+		feed->setOpenLinks(false);
+		feed->document()->setMaximumBlockCount(kFeedMaxLines);
+		tabs->addTab(feed, title);
+		return feed;
+	};
+	feedAll_ = makeFeed(T("Feed.All"));
+	feedGifts_ = makeFeed(T("Feed.Gifts"));
+	feedSuperChats_ = makeFeed(T("Feed.SuperChats"));
 
 	sendEdit_ = new QLineEdit(page);
 	sendEdit_->setPlaceholderText(T("Send.Placeholder"));
@@ -279,10 +431,11 @@ QWidget *BiliDock::buildMainPage()
 
 	auto *layout = new QVBoxLayout(page);
 	layout->setContentsMargins(0, 0, 0, 0);
-	layout->addLayout(header);
+	layout->setSpacing(6);
+	layout->addWidget(accountCard);
 	layout->addWidget(noRoomPanel_);
 	layout->addWidget(roomPanel_);
-	layout->addWidget(feed_, 1);
+	layout->addWidget(tabs, 1);
 	layout->addLayout(sendRow);
 
 	setLive(false);
@@ -294,6 +447,7 @@ QToolButton *BiliDock::buildMenuButton()
 {
 	auto *button = new QToolButton(this);
 	button->setText(QStringLiteral("⋯"));
+	button->setObjectName(QStringLiteral("bililiveMenu"));
 	button->setPopupMode(QToolButton::InstantPopup);
 	auto *menu = new QMenu(button);
 
@@ -317,6 +471,14 @@ QToolButton *BiliDock::buildMenuButton()
 		if (room_.roomId != 0)
 			QDesktopServices::openUrl(
 				QUrl(QStringLiteral("https://live.bilibili.com/%1").arg(room_.roomId)));
+	});
+	connect(menu->addAction(T("Menu.CopyRoomId")), &QAction::triggered, this, [this]() {
+		if (room_.roomId != 0)
+			copyToClipboard(QString::number(room_.roomId));
+	});
+	connect(menu->addAction(T("Menu.CopyRoomUrl")), &QAction::triggered, this, [this]() {
+		if (room_.roomId != 0)
+			copyToClipboard(QStringLiteral("https://live.bilibili.com/%1").arg(room_.roomId));
 	});
 	connect(menu->addAction(T("Menu.Refresh")), &QAction::triggered, this, &BiliDock::loadAccount);
 	connect(menu->addAction(T("Menu.Logout")), &QAction::triggered, this, &BiliDock::logout);
@@ -595,7 +757,10 @@ void BiliDock::logout()
 	user_ = {};
 	room_ = {};
 	setLive(false);
-	feed_->clear();
+	feedAll_->clear();
+	feedGifts_->clear();
+	feedSuperChats_->clear();
+	roomIdRow_->hide();
 	overlay_->clearLines();
 	pages_->setCurrentIndex(0);
 }
@@ -652,8 +817,9 @@ void BiliDock::loadAccount()
 			else
 				appendError(load.areas.result);
 
-			accountLabel_->setText(room_.roomId ? T("Account.Label").arg(user_.name).arg(room_.roomId)
-							    : user_.name);
+			accountLabel_->setText(user_.name);
+			roomIdLabel_->setText(T("Room.Id").arg(room_.roomId));
+			roomIdRow_->setVisible(room_.roomId != 0);
 			noRoomPanel_->setVisible(room_.roomId == 0);
 			roomPanel_->setVisible(room_.roomId != 0);
 			sendEdit_->setEnabled(room_.roomId != 0);
@@ -852,7 +1018,11 @@ void BiliDock::setLive(bool live)
 {
 	live_ = live;
 	liveButton_->setText(T(live ? "Live.Stop" : "Live.Start"));
-	liveState_->setText(live ? span(kColorError, T("Live.StateLive")) : span(kColorMuted, T("Live.StateOffline")));
+	liveButton_->setProperty("live", live);
+	repolish(liveButton_);
+	liveState_->setText(T(live ? "Live.StateLive" : "Live.StateOffline"));
+	liveState_->setProperty("live", live);
+	repolish(liveState_);
 	parentArea_->setEnabled(!live);
 	childArea_->setEnabled(!live);
 	liveButton_->setEnabled(!busy_ && room_.roomId != 0);
@@ -873,6 +1043,12 @@ void BiliDock::persist()
 	saveSettings(settings_);
 }
 
+void BiliDock::copyToClipboard(const QString &text)
+{
+	QGuiApplication::clipboard()->setText(text);
+	appendSystem(T("Room.Copied").arg(text));
+}
+
 /* Feed */
 
 void BiliDock::onLiveEvent(const LiveEvent &event)
@@ -880,33 +1056,41 @@ void BiliDock::onLiveEvent(const LiveEvent &event)
 	const QString user = span(kColorUser, event.user);
 	switch (event.kind) {
 	case LiveEvent::Kind::Danmaku: {
-		QString medal;
-		if (!event.medal.isEmpty())
-			medal = span(kColorMedal, QStringLiteral("[%1 %2]").arg(event.medal).arg(event.medalLevel)) +
-				QLatin1Char(' ');
-		appendLine(medal + user + QStringLiteral(": ") + event.text.toHtmlEscaped());
+		const QString medal = event.medal.isEmpty() ? QString() : medalBadge(event.medal, event.medalLevel);
+		appendLine(medal + user + span(kColorUser, QStringLiteral("：")) + event.text.toHtmlEscaped());
 		break;
 	}
 	case LiveEvent::Kind::Gift: {
 		if (!settings_.showGifts)
 			break;
-		QString line = T("Event.Gift")
-				       .arg(event.action.isEmpty() ? T("Event.GiftAction") : event.action, event.item)
+		QString line = user + QLatin1Char(' ') +
+			       (event.action.isEmpty() ? T("Event.GiftAction") : event.action).toHtmlEscaped() +
+			       QStringLiteral(" <b style=\"color:%1\">%2</b> ×%3")
+				       .arg(QLatin1String(kColorGift), event.item.toHtmlEscaped())
 				       .arg(event.count);
 		if (event.amountYuan > 0)
-			line += T("Event.Value").arg(yuan(event.amountYuan));
-		appendLine(user + QLatin1Char(' ') + span(kColorGift, line));
+			line += span(kColorGift, T("Event.Value").arg(yuan(event.amountYuan)));
+		appendLine(line, FeedKind::Gift);
 		break;
 	}
-	case LiveEvent::Kind::SuperChat:
-		appendLine(span(kColorSuperChat, T("Event.SuperChat").arg(yuan(event.amountYuan))) + QLatin1Char(' ') +
-			   user + QStringLiteral(": ") + span(kColorSuperChat, event.text));
+	case LiveEvent::Kind::SuperChat: {
+		const QString head =
+			QStringLiteral(
+				"<b style=\"color:#ffffff\">%1</b>&nbsp;&nbsp;<span style=\"color:#f0f0f0\">%2</span>")
+				.arg(T("Event.SuperChat").arg(yuan(event.amountYuan)).toHtmlEscaped(),
+				     event.user.toHtmlEscaped());
+		const QString body =
+			QStringLiteral("<br><span style=\"color:#ffffff\">%1</span>").arg(event.text.toHtmlEscaped());
+		appendLine(card(superChatColor(event.amountYuan), head + body), FeedKind::SuperChat);
 		break;
+	}
 	case LiveEvent::Kind::Guard: {
 		QString line = T("Event.Guard").arg(event.item).arg(event.count);
 		if (event.amountYuan > 0)
 			line += T("Event.Value").arg(yuan(event.amountYuan));
-		appendLine(user + QLatin1Char(' ') + span(kColorGuard, line));
+		appendLine(card(kColorGuardCard,
+				span(kColorUser, event.user) + QLatin1Char(' ') + span("#e2cfff", line)),
+			   FeedKind::Gift);
 		break;
 	}
 	case LiveEvent::Kind::Enter:
@@ -969,10 +1153,19 @@ void BiliDock::onDanmakuState(danmaku::DanmakuClient::State state, const QString
 	}
 }
 
-void BiliDock::appendLine(const QString &html)
+void BiliDock::appendLine(const QString &html, FeedKind kind)
 {
-	const QString time = QDateTime::currentDateTime().toString(QStringLiteral("HH:mm"));
-	feed_->append(span(kColorTime, time) + QLatin1Char(' ') + html);
+	// Cards (Super Chats, guards) are tables, which always start a new block; a time stamp in front of one would
+	// sit alone on its own line.
+	const QString row = html.startsWith(QLatin1String("<table"))
+				    ? html
+				    : span(kColorTime, QDateTime::currentDateTime().toString(QStringLiteral("HH:mm"))) +
+					      QStringLiteral("&nbsp;") + html;
+	feedAll_->append(row);
+	if (kind != FeedKind::Plain)
+		feedGifts_->append(row);
+	if (kind == FeedKind::SuperChat)
+		feedSuperChats_->append(row);
 	overlay_->appendLine(html);
 }
 
@@ -994,9 +1187,10 @@ void BiliDock::appendError(const ApiResult &result)
 
 void BiliDock::updateStats()
 {
-	stats_->setText(
-		T("Stats.Format")
-			.arg(countText(watched_), countText(online_), countText(likes_), countText(followers_)));
+	statOnline_->setText(countText(online_));
+	statWatched_->setText(countText(watched_));
+	statLikes_->setText(countText(likes_));
+	statFollowers_->setText(countText(followers_));
 	overlay_->setHeader(T("Overlay.Header").arg(countText(online_), countText(watched_)));
 }
 

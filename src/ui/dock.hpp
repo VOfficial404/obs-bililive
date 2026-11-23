@@ -93,10 +93,14 @@ private:
 	void setLive(bool live);
 	void setBusy(bool busy, const QString &status = {});
 	void persist();
+	void copyToClipboard(const QString &text);
 
 	void onLiveEvent(const danmaku::LiveEvent &event);
 	void onDanmakuState(danmaku::DanmakuClient::State state, const QString &detail);
-	void appendLine(const QString &html);
+	// Feed rows: every row goes to the "all" tab and the overlay; gift rows also to the gift tab, Super
+	// Chats to both other tabs.
+	enum class FeedKind { Plain, Gift, SuperChat };
+	void appendLine(const QString &html, FeedKind kind = FeedKind::Plain);
 	void appendSystem(const QString &text, const char *color = nullptr);
 	void appendError(const bili::ApiResult &result);
 	void updateStats();
@@ -124,17 +128,24 @@ private:
 
 	QStackedWidget *pages_ = nullptr;
 	QLabel *accountLabel_ = nullptr;
+	QLabel *roomIdLabel_ = nullptr;
+	QWidget *roomIdRow_ = nullptr;
 	QWidget *noRoomPanel_ = nullptr;
 	QWidget *roomPanel_ = nullptr;
 	QLineEdit *titleEdit_ = nullptr;
 	QComboBox *parentArea_ = nullptr;
 	QComboBox *childArea_ = nullptr;
 	QPushButton *liveButton_ = nullptr;
-	QLabel *liveState_ = nullptr;
+	QLabel *liveState_ = nullptr; // "live" pill
 	QLabel *status_ = nullptr;
-	QLabel *stats_ = nullptr;
+	QLabel *statOnline_ = nullptr;
+	QLabel *statWatched_ = nullptr;
+	QLabel *statLikes_ = nullptr;
+	QLabel *statFollowers_ = nullptr;
 	QLabel *danmakuState_ = nullptr;
-	QTextBrowser *feed_ = nullptr;
+	QTextBrowser *feedAll_ = nullptr;
+	QTextBrowser *feedGifts_ = nullptr;      // gifts, guards, Super Chats
+	QTextBrowser *feedSuperChats_ = nullptr; // Super Chats only
 	QLineEdit *sendEdit_ = nullptr;
 	QPushButton *sendButton_ = nullptr;
 
