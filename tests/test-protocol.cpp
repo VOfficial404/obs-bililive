@@ -20,6 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "bili/sign.hpp"
 #include "danmaku/events.hpp"
 #include "danmaku/packet.hpp"
+#include "danmaku/websocket.hpp"
 #include "update.hpp"
 
 #include <QTest>
@@ -178,6 +179,84 @@ private slots:
 
 		batch.body = "not zlib";
 		QVERIFY(!danmaku::expandPacket(batch, out));
+	}
+
+	// Vector from RFC 6455 section 1.3.
+	void wsAcceptKeyMatchesRfc()
+	{
+		QCOMPARE(danmaku::wsAcceptKey("dGhlIHNhbXBsZSBub25jZQ=="), QByteArray("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
+	}
+
+	void wsHandshakeChecksAcceptKey()
+	{
+		const QByteArray key = "dGhlIHNhbXBsZSBub25jZQ==";
+		const QByteArray ok =
+			"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+			"sec-websocket-accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
+		QCOMPARE(danmaku::wsCheckHandshake(ok + "\x82\x00", key), ok.size());
+		QCOMPARE(danmaku::wsCheckHandshake(ok.left(20), key), qsizetype(0));
+		QByteArray wrongAccept = ok;
+		wrongAccept.replace("s3pPL", "AAAAA");
+		QCOMPARE(danmaku::wsCheckHandshake(wrongAccept, key), qsizetype(-1));
+		QCOMPARE(danmaku::wsCheckHandshake("HTTP/1.1 403 Forbidden\r\n\r\n", key), qsizetype(-1));
+	}
+
+	// Client frames are masked; the reader unmasks, so a round trip must return the payload unchanged.
+	void wsFramesRoundTrip()
+	{
+		const QByteArray small = danmaku::encodePacket(danmaku::kOpHeartbeat, {});
+		const QByteArray medium(300, 'm');
+		const QByteArray large(70000, 'L');
+		const QByteArray stream = danmaku::wsFrame(danmaku::kWsBinary, small, 0x12345678) +
+					  danmaku::wsFrame(danmaku::kWsBinary, medium, 0xdeadbeef) +
+					  danmaku::wsFrame(danmaku::kWsBinary, large, 0x01020304);
+		QVERIFY(!stream.contains(medium.left(8))); // the payload is masked on the wire
+
+		danmaku::WsFrameReader reader;
+		std::vector<danmaku::WsMessage> out;
+		QVERIFY(reader.feed(stream.left(7), out));
+		QVERIFY(out.empty());
+		QVERIFY(reader.feed(stream.mid(7), out));
+		QCOMPARE(out.size(), size_t(3));
+		QCOMPARE(out[0].payload, small);
+		QCOMPARE(out[1].payload, medium);
+		QCOMPARE(out[2].payload, large);
+	}
+
+	// Server frames arrive unmasked; a ping may sit between the fragments of a message.
+	void wsReassemblesFragmentsAroundPing()
+	{
+		const QByteArray stream = QByteArray("\x02\x03"
+						     "abc",
+						     5) +
+					  QByteArray("\x89\x01"
+						     "p",
+						     3) +
+					  QByteArray("\x80\x02"
+						     "de",
+						     4);
+		danmaku::WsFrameReader reader;
+		std::vector<danmaku::WsMessage> out;
+		QVERIFY(reader.feed(stream, out));
+		QCOMPARE(out.size(), size_t(2));
+		QCOMPARE(out[0].opcode, quint8(danmaku::kWsPing));
+		QCOMPARE(out[1].opcode, quint8(danmaku::kWsBinary));
+		QCOMPARE(out[1].payload, QByteArray("abcde"));
+	}
+
+	void wsRejectsMalformedFrames()
+	{
+		std::vector<danmaku::WsMessage> out;
+		// 64-bit length far past the cap: refused before anything is buffered for it.
+		QVERIFY(!danmaku::WsFrameReader().feed(QByteArray("\x82\x7f\x00\x00\x00\x10\x00\x00\x00\x00", 10),
+						       out));
+		// RSV bit set without a negotiated extension.
+		QVERIFY(!danmaku::WsFrameReader().feed(QByteArray("\xc2\x00", 2), out));
+		// Continuation with no message started.
+		QVERIFY(!danmaku::WsFrameReader().feed(QByteArray("\x80\x00", 2), out));
+		// Fragmented control frame.
+		QVERIFY(!danmaku::WsFrameReader().feed(QByteArray("\x09\x00", 2), out));
+		QVERIFY(out.empty());
 	}
 
 	// A batch that inflates past the cap is refused instead of being decompressed into memory.

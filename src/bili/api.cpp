@@ -534,12 +534,14 @@ DanmuInfo BiliApi::fetchDanmuInfo(qint64 roomId)
 	info.token = data.value(QLatin1String("token")).toString();
 	for (const QJsonValue value : data.value(QLatin1String("host_list")).toArray()) {
 		const QJsonObject host = value.toObject();
-		const qint64 port = jsonInt(host.value(QLatin1String("port")));
-		if (port > 0 && port <= 65535)
-			info.hosts.append({host.value(QLatin1String("host")).toString(), static_cast<quint16>(port)});
+		const QString name = host.value(QLatin1String("host")).toString();
+		const qint64 port = jsonInt(host.value(QLatin1String("wss_port")));
+		// The token and buvid go to this host; only accept Bilibili's own chat servers.
+		if (name.endsWith(QLatin1String(".bilibili.com")) && port > 0 && port <= 65535)
+			info.hosts.append({name, static_cast<quint16>(port)});
 	}
 	if (info.hosts.isEmpty())
-		info.hosts.append({QStringLiteral("broadcastlv.chat.bilibili.com"), 2243});
+		info.hosts.append({QStringLiteral("broadcastlv.chat.bilibili.com"), 443});
 	if (info.result.ok() && info.token.isEmpty())
 		info.result = localFailure(kBadResponse, QStringLiteral("getDanmuInfo returned no token"));
 	return info;

@@ -22,16 +22,16 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "bili/api.hpp"
 #include "danmaku/events.hpp"
 #include "danmaku/packet.hpp"
+#include "danmaku/websocket.hpp"
 
 #include <QObject>
-#include <QTcpSocket>
 #include <QTimer>
 
 #include <memory>
 
 namespace bililive::danmaku {
 
-// Live chat connection over the plain TCP endpoint (port 2243), reconnecting with backoff.
+// Live chat connection over TLS (wss://<host>:<wss_port>/sub), reconnecting with backoff.
 class DanmakuClient : public QObject {
 	Q_OBJECT
 
@@ -55,14 +55,14 @@ private:
 	void fetchInfo();
 	void connectToHost();
 	void onConnected();
-	void onReadyRead();
-	void onDisconnected();
+	void onReceived(const QByteArray &data);
+	void onDisconnected(const QString &reason);
 	void retry(const QString &reason);
 	void setState(State state, const QString &detail = {});
 	void handlePacket(const Packet &packet);
 
 	std::shared_ptr<bili::BiliApi> api_;
-	QTcpSocket socket_;
+	WssConnection socket_;
 	QTimer heartbeat_;
 	QTimer stallTimer_; // restarted by every byte received; fires when the connection has gone quiet
 	QTimer retryTimer_;

@@ -42,13 +42,12 @@ DanmakuClient::DanmakuClient(std::shared_ptr<bili::BiliApi> api, QObject *parent
 	retryTimer_.setSingleShot(true);
 	stallTimer_.setSingleShot(true);
 
-	connect(&heartbeat_, &QTimer::timeout, this, [this]() { socket_.write(encodePacket(kOpHeartbeat, {})); });
+	connect(&heartbeat_, &QTimer::timeout, this, [this]() { socket_.sendBinary(encodePacket(kOpHeartbeat, {})); });
 	connect(&retryTimer_, &QTimer::timeout, this, &DanmakuClient::fetchInfo);
 	connect(&stallTimer_, &QTimer::timeout, this, [this]() { retry(QStringLiteral("timeout")); });
-	connect(&socket_, &QTcpSocket::connected, this, &DanmakuClient::onConnected);
-	connect(&socket_, &QTcpSocket::readyRead, this, &DanmakuClient::onReadyRead);
-	connect(&socket_, &QTcpSocket::disconnected, this, &DanmakuClient::onDisconnected);
-	connect(&socket_, &QTcpSocket::errorOccurred, this, &DanmakuClient::onDisconnected);
+	connect(&socket_, &WssConnection::opened, this, &DanmakuClient::onConnected);
+	connect(&socket_, &WssConnection::received, this, &DanmakuClient::onReceived);
+	connect(&socket_, &WssConnection::closed, this, &DanmakuClient::onDisconnected);
 }
 
 DanmakuClient::~DanmakuClient()
@@ -57,7 +56,7 @@ DanmakuClient::~DanmakuClient()
 	roomId_ = 0;
 	runner_.waitForDone();
 	socket_.disconnect(this);
-	socket_.abort();
+	socket_.close();
 }
 
 void DanmakuClient::start(qint64 roomId)
@@ -75,7 +74,7 @@ void DanmakuClient::stop()
 	heartbeat_.stop();
 	retryTimer_.stop();
 	stallTimer_.stop();
-	socket_.abort();
+	socket_.close();
 	reader_.reset();
 	setState(State::Idle);
 }
@@ -107,8 +106,8 @@ void DanmakuClient::connectToHost()
 {
 	const bili::DanmuHost &host = info_.hosts.at(hostIndex_ % info_.hosts.size());
 	reader_.reset();
-	socket_.abort();
-	socket_.connectToHost(host.host, host.port);
+	socket_.close();
+	socket_.open(host.host, host.port);
 	stallTimer_.start(kHandshakeMs);
 }
 
@@ -124,14 +123,14 @@ void DanmakuClient::onConnected()
 		{QStringLiteral("type"), 2},
 		{QStringLiteral("key"), info_.token},
 	};
-	socket_.write(encodePacket(kOpAuth, QJsonDocument(auth).toJson(QJsonDocument::Compact)));
+	socket_.sendBinary(encodePacket(kOpAuth, QJsonDocument(auth).toJson(QJsonDocument::Compact)));
 }
 
-void DanmakuClient::onReadyRead()
+void DanmakuClient::onReceived(const QByteArray &data)
 {
 	std::vector<Packet> packets;
 	stallTimer_.start(state_ == State::Connected ? kStallMs : kHandshakeMs);
-	if (!reader_.feed(socket_.readAll(), packets)) {
+	if (!reader_.feed(data, packets)) {
 		retry(QStringLiteral("corrupt packet stream"));
 		return;
 	}
@@ -144,11 +143,11 @@ void DanmakuClient::onReadyRead()
 	}
 }
 
-void DanmakuClient::onDisconnected()
+void DanmakuClient::onDisconnected(const QString &reason)
 {
 	if (roomId_ == 0 || retryTimer_.isActive())
 		return;
-	retry(socket_.errorString());
+	retry(reason);
 }
 
 void DanmakuClient::retry(const QString &reason)
@@ -162,7 +161,7 @@ void DanmakuClient::retry(const QString &reason)
 	const int delaySeconds = qMin(kMaxRetryDelaySeconds, 1 << qMin(attempt_, 5));
 	retryTimer_.start(delaySeconds * 1000);
 	setState(State::Reconnecting, reason);
-	socket_.abort();
+	socket_.close();
 }
 
 void DanmakuClient::setState(State state, const QString &detail)
@@ -194,7 +193,7 @@ void DanmakuClient::handlePacket(const Packet &packet)
 			}
 			attempt_ = 0;
 			setState(State::Connected);
-			socket_.write(encodePacket(kOpHeartbeat, {}));
+			socket_.sendBinary(encodePacket(kOpHeartbeat, {}));
 			heartbeat_.start();
 			stallTimer_.start(kStallMs);
 			break;

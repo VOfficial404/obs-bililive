@@ -16,7 +16,7 @@ include(compilerconfig)
 include(defaults)
 include(helpers)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 find_package(CURL REQUIRED)
 
 # Vendored third-party code is built without the project's warnings-as-errors policy.
@@ -41,12 +41,13 @@ target_sources(
     src/danmaku/events.cpp
     src/danmaku/packet.cpp
     src/danmaku/protobuf.cpp
+    src/danmaku/websocket.cpp
     src/update.cpp
 )
 target_include_directories(bililive-core PUBLIC src)
 target_link_libraries(
   bililive-core
-  PUBLIC Qt6::Core Qt6::Network CURL::libcurl qrcodegen puff
+  PUBLIC Qt6::Core CURL::libcurl qrcodegen puff $<$<PLATFORM_ID:Windows>:ws2_32>
 )
 set_target_properties(bililive-core PROPERTIES AUTOMOC ON POSITION_INDEPENDENT_CODE ON)
 
@@ -58,6 +59,15 @@ target_link_libraries(
   ${CMAKE_PROJECT_NAME}
   PRIVATE OBS::libobs OBS::obs-frontend-api Qt6::Core Qt6::Widgets bililive-core
 )
+# Session storage: DPAPI on Windows, Keychain on macOS (see src/secret-store.cpp).
+if(WIN32)
+  target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE crypt32)
+elseif(APPLE)
+  target_link_libraries(
+    ${CMAKE_PROJECT_NAME}
+    PRIVATE "$<LINK_LIBRARY:FRAMEWORK,Security.framework>" "$<LINK_LIBRARY:FRAMEWORK,CoreFoundation.framework>"
+  )
+endif()
 target_compile_options(
   ${CMAKE_PROJECT_NAME}
   PRIVATE $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-quoted-include-in-framework-header -Wno-comma>
@@ -71,6 +81,7 @@ target_sources(
   ${CMAKE_PROJECT_NAME}
   PRIVATE
     src/plugin-main.cpp
+    src/secret-store.cpp
     src/settings.cpp
     src/stream-control.cpp
     src/ui/dock.cpp
