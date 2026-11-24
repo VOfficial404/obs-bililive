@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.8.0]
+
 ### 安全
 
 - 登录凭据不再以明文保存：Windows 上用 DPAPI 加密（只有当前 Windows 用户能解密），macOS 上存进钥匙串。旧版本保存的明文凭据和 `config.json.bak` 备份会在首次启动时自动转换，无需重新登录。Linux 上仍是明文，但配置文件只有自己能读。
@@ -132,7 +134,8 @@
 - 在面板里发送弹幕。
 - 简体中文和英文界面。
 
-[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.7.1...HEAD
+[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.8.0...HEAD
+[0.8.0]: https://github.com/VOfficial404/obs-bililive/compare/0.7.1...0.8.0
 [0.7.1]: https://github.com/VOfficial404/obs-bililive/compare/0.7.0...0.7.1
 [0.7.0]: https://github.com/VOfficial404/obs-bililive/compare/0.6.2...0.7.0
 [0.6.2]: https://github.com/VOfficial404/obs-bililive/compare/0.6.1...0.6.2
