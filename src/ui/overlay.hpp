@@ -18,24 +18,31 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #pragma once
 
+#include <QFont>
+#include <QImage>
+#include <QTimer>
 #include <QWidget>
 
 #include <deque>
+#include <memory>
 
-class QLabel;
 class QSizeGrip;
-class QVBoxLayout;
+class QTextDocument;
 
 namespace bililive {
 
 // Frameless, always-on-top danmaku window for reading chat over a game.
 // Unlocked it can be dragged and resized; locked it lets every click through to the window below.
 // Keep it parentless: an owned window disappears when OBS is minimized.
+//
+// The text is laid out with one QTextDocument per line and drawn into a cached image, redrawn at most every
+// kRepaintMs: no widget per line, and nothing at all is laid out while the window is hidden.
 class DanmakuOverlay : public QWidget {
 	Q_OBJECT
 
 public:
 	explicit DanmakuOverlay(QWidget *parent = nullptr);
+	~DanmakuOverlay() override;
 
 	void appendLine(const QString &html);
 	void clearLines();
@@ -62,16 +69,24 @@ protected:
 	void showEvent(QShowEvent *event) override;
 
 private:
+	struct Line {
+		QString html;
+		std::unique_ptr<QTextDocument> document; // laid out on first draw
+	};
+
 	void applyWindowFlags();
 	bool applyCaptureAffinity();
-	void trimLines();
+	void scheduleRender();
+	void render();
+	QTextDocument *layOut(Line &line, qreal width);
 
-	QWidget *content_;
-	QVBoxLayout *linesLayout_;
-	QLabel *header_;
-	QLabel *hint_;
 	QSizeGrip *grip_;
-	std::deque<QLabel *> lines_;
+	QTimer repaintTimer_;
+	QFont font_;
+	std::deque<Line> lines_;
+	Line header_;
+	Line hint_;
+	QImage text_; // header, hint and lines with their outline, at device pixel ratio
 	bool locked_ = false;
 	bool hiddenFromCapture_ = false;
 	int opacity_ = 40;

@@ -109,6 +109,7 @@ private:
 	// Chats to both other tabs.
 	enum class FeedKind { Plain, Gift, SuperChat };
 	void appendLine(const QString &html, FeedKind kind = FeedKind::Plain);
+	void flushFeeds();
 	void appendSystem(const QString &text, const char *color = nullptr);
 	void appendError(const bili::ApiResult &result);
 	void updateStats();
@@ -132,6 +133,12 @@ private:
 	QPointer<QrDialog> qrDialog_;
 	QString qrKey_;
 	QTimer qrTimer_;
+
+	// Feed rows waiting for the next flush; the text views relayout once per batch instead of once per row.
+	QStringList pendingAll_;
+	QStringList pendingGifts_;
+	QStringList pendingSuperChats_;
+	QTimer feedTimer_;
 	bool qrPollInFlight_ = false;
 
 	QStackedWidget *pages_ = nullptr;

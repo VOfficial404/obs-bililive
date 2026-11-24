@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+## [0.6.2]
+
+### 性能
+
+- 弹幕悬浮窗改为把所有文字绘制到一张缓存图里，最多每秒刷新 10 次，不再为每条弹幕创建一个控件，也去掉了开销很大的模糊阴影（改用 1 像素描边）。悬浮窗隐藏时不做任何排版。
+- 面板的弹幕列表改为每 100 毫秒批量写入一次。
+- 在每秒 200 条消息的测试中，插件占用的 OBS 界面线程从约 7%～30% 降到 0.2% 以下。
+
+### 修复
+
+- 弹幕悬浮窗会随弹幕增多自己越变越高。
+
 ## [0.6.1]
 
 ### 修复
@@ -84,7 +96,8 @@
 - 在面板里发送弹幕。
 - 简体中文和英文界面。
 
-[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.6.1...HEAD
+[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.6.2...HEAD
+[0.6.2]: https://github.com/VOfficial404/obs-bililive/compare/0.6.1...0.6.2
 [0.6.1]: https://github.com/VOfficial404/obs-bililive/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/VOfficial404/obs-bililive/compare/0.5.0...0.6.0
 [0.5.0]: https://github.com/VOfficial404/obs-bililive/compare/0.4.0...0.5.0

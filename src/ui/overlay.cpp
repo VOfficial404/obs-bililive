@@ -18,15 +18,16 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "ui/overlay.hpp"
 
-#include <QGraphicsDropShadowEffect>
+#include <QAbstractTextDocumentLayout>
 #include <QGuiApplication>
-#include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QScreen>
 #include <QSizeGrip>
-#include <QVBoxLayout>
+#include <QTextDocument>
 #include <QWindow>
+
+#include <vector>
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -41,31 +42,30 @@ namespace bililive {
 
 namespace {
 
-constexpr int kMaxLines = 100;
+constexpr size_t kMaxLines = 100;
 constexpr int kMargin = 10;
+constexpr int kSpacing = 2;
 constexpr int kRadius = 8;
+// Chat at 10 fps reads the same as at 60 and costs a fraction of it in busy rooms.
+constexpr int kRepaintMs = 100;
 // Fully transparent pixels of a layered window don't receive the mouse; keep the unlocked window grabbable.
 constexpr int kMinUnlockedOpacity = 15;
 constexpr QSize kDefaultSize(360, 420);
+// One-pixel dark outline: keeps the text readable on bright game scenes with a fully transparent background.
+constexpr QPoint kOutline[] = {{1, 1}, {-1, 0}, {1, 0}, {0, -1}, {0, 1}};
 
-QLabel *makeLabel(QWidget *parent)
+QString muted(const QString &text)
 {
-	auto *label = new QLabel(parent);
-	label->setTextFormat(Qt::RichText);
-	label->setWordWrap(true);
-	label->setAttribute(Qt::WA_TransparentForMouseEvents);
-	return label;
+	return text.isEmpty() ? QString()
+			      : QStringLiteral("<span style=\"color:#c8c8c8\">%1</span>").arg(text.toHtmlEscaped());
 }
 
 } // namespace
 
 DanmakuOverlay::DanmakuOverlay(QWidget *parent)
 	: QWidget(parent),
-	  content_(new QWidget(this)),
-	  linesLayout_(new QVBoxLayout(content_)),
-	  header_(makeLabel(content_)),
-	  hint_(makeLabel(content_)),
-	  grip_(new QSizeGrip(this))
+	  grip_(new QSizeGrip(this)),
+	  font_(QGuiApplication::font())
 {
 	setAttribute(Qt::WA_TranslucentBackground);
 	setAttribute(Qt::WA_ShowWithoutActivating);
@@ -75,30 +75,9 @@ DanmakuOverlay::DanmakuOverlay(QWidget *parent)
 	setObjectName(QStringLiteral("bililiveOverlay"));
 	applyWindowFlags();
 
-	content_->setAttribute(Qt::WA_TransparentForMouseEvents);
-
-	// Keeps the text readable on bright game scenes even with a fully transparent background.
-	auto *shadow = new QGraphicsDropShadowEffect(content_);
-	shadow->setBlurRadius(4);
-	shadow->setOffset(1, 1);
-	shadow->setColor(QColor(0, 0, 0, 230));
-	content_->setGraphicsEffect(shadow);
-
-	header_->setObjectName(QStringLiteral("bililiveOverlayMuted"));
-	hint_->setObjectName(QStringLiteral("bililiveOverlayMuted"));
-	header_->hide();
-	hint_->hide();
-
-	linesLayout_->setContentsMargins(0, 0, 0, 0);
-	linesLayout_->setSpacing(2);
-	linesLayout_->addWidget(header_);
-	linesLayout_->addWidget(hint_);
-	// Lines are inserted above this stretch: they start right under the header and grow downwards.
-	linesLayout_->addStretch(1);
-
-	auto *layout = new QVBoxLayout(this);
-	layout->setContentsMargins(kMargin, kMargin, kMargin, kMargin);
-	layout->addWidget(content_);
+	repaintTimer_.setSingleShot(true);
+	repaintTimer_.setInterval(kRepaintMs);
+	connect(&repaintTimer_, &QTimer::timeout, this, &DanmakuOverlay::render);
 
 	setFontPixelSize(16);
 	resize(kDefaultSize);
@@ -108,33 +87,35 @@ DanmakuOverlay::DanmakuOverlay(QWidget *parent)
 	}
 }
 
+DanmakuOverlay::~DanmakuOverlay() = default;
+
 void DanmakuOverlay::appendLine(const QString &html)
 {
-	QLabel *label = makeLabel(content_);
-	label->setText(html);
-	linesLayout_->insertWidget(linesLayout_->count() - 1, label);
-	lines_.push_back(label);
-	trimLines();
+	lines_.push_back({html, nullptr});
+	while (lines_.size() > kMaxLines)
+		lines_.pop_front();
+	scheduleRender();
 }
 
 void DanmakuOverlay::clearLines()
 {
-	for (QLabel *label : lines_)
-		delete label;
 	lines_.clear();
+	scheduleRender();
 }
 
 void DanmakuOverlay::setHeader(const QString &text)
 {
-	header_->setText(text.toHtmlEscaped());
-	header_->setVisible(!text.isEmpty());
-	trimLines();
+	const QString html = muted(text);
+	if (html == header_.html)
+		return;
+	header_ = {html, nullptr};
+	scheduleRender();
 }
 
 void DanmakuOverlay::setHint(const QString &text)
 {
-	hint_->setText(text.toHtmlEscaped());
-	hint_->setVisible(!locked_ && !text.isEmpty());
+	hint_ = {muted(text), nullptr};
+	scheduleRender();
 }
 
 void DanmakuOverlay::setLocked(bool locked)
@@ -142,14 +123,13 @@ void DanmakuOverlay::setLocked(bool locked)
 	if (locked == locked_)
 		return;
 	locked_ = locked;
-	hint_->setVisible(!locked && !hint_->text().isEmpty());
 	grip_->setVisible(!locked);
 
 	const bool wasVisible = isVisible();
 	applyWindowFlags(); // changing flags hides the window
 	if (wasVisible)
 		show();
-	update();
+	scheduleRender();
 }
 
 bool DanmakuOverlay::canHideFromCapture()
@@ -175,13 +155,8 @@ void DanmakuOverlay::setBackgroundOpacity(int percent)
 
 void DanmakuOverlay::setFontPixelSize(int pixels)
 {
-	// OBS themes style every QWidget (font-size, colour) through the application style sheet, which beats
-	// setFont() and palettes; a style sheet on the overlay itself is more specific and wins.
-	setStyleSheet(
-		QStringLiteral("#bililiveOverlay QLabel { color: #ffffff; background: transparent; font-size: %1px; }"
-			       "#bililiveOverlay QLabel#bililiveOverlayMuted { color: #c8c8c8; }")
-			.arg(pixels));
-	trimLines();
+	font_.setPixelSize(pixels);
+	scheduleRender();
 }
 
 void DanmakuOverlay::paintEvent(QPaintEvent *)
@@ -198,6 +173,7 @@ void DanmakuOverlay::paintEvent(QPaintEvent *)
 		painter.setPen(pen);
 	}
 	painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), kRadius, kRadius);
+	painter.drawImage(0, 0, text_);
 }
 
 void DanmakuOverlay::mousePressEvent(QMouseEvent *event)
@@ -221,7 +197,7 @@ void DanmakuOverlay::resizeEvent(QResizeEvent *event)
 {
 	QWidget::resizeEvent(event);
 	grip_->move(width() - grip_->width(), height() - grip_->height());
-	trimLines();
+	scheduleRender();
 	if (isVisible() && !locked_)
 		emit geometryEdited();
 }
@@ -231,7 +207,7 @@ void DanmakuOverlay::showEvent(QShowEvent *event)
 	QWidget::showEvent(event);
 	// The native window may be new; display affinity belongs to the HWND.
 	applyCaptureAffinity();
-	trimLines();
+	render();
 }
 
 void DanmakuOverlay::applyWindowFlags()
@@ -255,31 +231,91 @@ bool DanmakuOverlay::applyCaptureAffinity()
 #endif
 }
 
-void DanmakuOverlay::trimLines()
+void DanmakuOverlay::scheduleRender()
 {
-	while (lines_.size() > static_cast<size_t>(kMaxLines)) {
-		delete lines_.front();
-		lines_.pop_front();
+	// Hidden: keep only the strings; showEvent renders them.
+	if (isVisible() && !repaintTimer_.isActive())
+		repaintTimer_.start();
+}
+
+QTextDocument *DanmakuOverlay::layOut(Line &line, qreal width)
+{
+	if (!line.document) {
+		line.document = std::make_unique<QTextDocument>();
+		line.document->setDocumentMargin(0);
+		line.document->setDefaultFont(font_);
+		line.document->setHtml(line.html);
+	} else if (line.document->defaultFont() != font_) {
+		line.document->setDefaultFont(font_);
 	}
+	if (line.document->textWidth() != width)
+		line.document->setTextWidth(width);
+	return line.document.get();
+}
+
+void DanmakuOverlay::render()
+{
+	repaintTimer_.stop();
 	if (!isVisible())
 		return;
 
-	// Show the newest lines that fit; older ones scroll off the top for good.
-	const int width = content_->width();
-	const int spacing = linesLayout_->spacing();
-	int available = content_->height();
-	for (QLabel *label : {header_, hint_}) {
-		if (!label->isHidden())
-			available -= label->heightForWidth(width) + spacing;
+	const qreal width = qMax(1, this->width() - 2 * kMargin);
+	const qreal height = this->height() - 2 * kMargin;
+	std::vector<QTextDocument *> top;
+	qreal used = 0;
+	for (Line *fixed : {&header_, &hint_}) {
+		if (fixed->html.isEmpty() || (fixed == &hint_ && locked_))
+			continue;
+		top.push_back(layOut(*fixed, width));
+		used += top.back()->size().height() + kSpacing;
 	}
-	int used = 0;
-	for (QLabel *label : lines_)
-		used += label->heightForWidth(width) + spacing;
-	while (used > available && lines_.size() > 1) {
-		used -= lines_.front()->heightForWidth(width) + spacing;
-		delete lines_.front();
-		lines_.pop_front();
+
+	// Keep the newest lines that fit; older ones scroll off the top for good.
+	size_t first = lines_.size();
+	while (first > 0) {
+		const qreal lineHeight = layOut(lines_[first - 1], width)->size().height() + kSpacing;
+		if (used + lineHeight > height && first < lines_.size())
+			break;
+		used += lineHeight;
+		first--;
 	}
+	lines_.erase(lines_.begin(), lines_.begin() + static_cast<std::ptrdiff_t>(first));
+
+	const qreal ratio = devicePixelRatioF();
+	QImage text(size() * ratio, QImage::Format_ARGB32_Premultiplied);
+	text.setDevicePixelRatio(ratio);
+	text.fill(Qt::transparent);
+	{
+		QPainter painter(&text);
+		QAbstractTextDocumentLayout::PaintContext context;
+		context.palette.setColor(QPalette::Text, Qt::white);
+		painter.translate(kMargin, kMargin);
+		const auto draw = [&](QTextDocument *document) {
+			document->documentLayout()->draw(&painter, context);
+			painter.translate(0, document->size().height() + kSpacing);
+		};
+		for (QTextDocument *document : top)
+			draw(document);
+		for (Line &line : lines_)
+			draw(line.document.get());
+	}
+
+	QImage outline = text;
+	{
+		QPainter painter(&outline);
+		painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
+		painter.fillRect(QRect(QPoint(0, 0), size()), QColor(0, 0, 0, 220));
+	}
+	text_ = QImage(text.size(), QImage::Format_ARGB32_Premultiplied);
+	text_.setDevicePixelRatio(ratio);
+	text_.fill(Qt::transparent);
+	{
+		QPainter painter(&text_);
+		for (const QPoint &offset : kOutline)
+			painter.drawImage(offset, outline);
+		painter.drawImage(0, 0, text);
+	}
+	update();
 }
 
 } // namespace bililive

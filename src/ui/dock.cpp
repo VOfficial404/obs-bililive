@@ -49,9 +49,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QPainterPath>
 #include <QPushButton>
 #include <QStackedWidget>
+#include <QScrollBar>
 #include <QStyle>
 #include <QTabWidget>
 #include <QTextBrowser>
+#include <QTextCursor>
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -65,6 +67,7 @@ using danmaku::LiveEvent;
 
 constexpr int kQrPollMs = 1500;
 constexpr int kFeedMaxLines = 1000;
+constexpr int kFeedFlushMs = 100;
 constexpr QSize kCoverSize(112, 63);
 constexpr int kCoverMaxWidth = 1920; // keeps uploads small; Bilibili shows covers far below this
 constexpr int kAlreadyHasRoom = 1531193016;
@@ -263,6 +266,9 @@ BiliDock::BiliDock(QWidget *parent)
 	api_->setCredentials(settings_.credentials);
 
 	qrTimer_.setInterval(kQrPollMs);
+	feedTimer_.setSingleShot(true);
+	feedTimer_.setInterval(kFeedFlushMs);
+	connect(&feedTimer_, &QTimer::timeout, this, &BiliDock::flushFeeds);
 	connect(&qrTimer_, &QTimer::timeout, this, &BiliDock::pollQr);
 	connect(danmaku_, &danmaku::DanmakuClient::liveEvent, this, &BiliDock::onLiveEvent);
 	connect(danmaku_, &danmaku::DanmakuClient::stateChanged, this, &BiliDock::onDanmakuState);
@@ -899,6 +905,9 @@ void BiliDock::logout()
 	user_ = {};
 	room_ = {};
 	setLive(false);
+	pendingAll_.clear();
+	pendingGifts_.clear();
+	pendingSuperChats_.clear();
 	feedAll_->clear();
 	feedGifts_->clear();
 	feedSuperChats_->clear();
@@ -1389,12 +1398,42 @@ void BiliDock::appendLine(const QString &html, FeedKind kind)
 				    ? html
 				    : span(kColorTime, QDateTime::currentDateTime().toString(QStringLiteral("HH:mm"))) +
 					      QStringLiteral("&nbsp;") + html;
-	feedAll_->append(row);
+	pendingAll_.append(row);
 	if (kind != FeedKind::Plain)
-		feedGifts_->append(row);
+		pendingGifts_.append(row);
 	if (kind == FeedKind::SuperChat)
-		feedSuperChats_->append(row);
+		pendingSuperChats_.append(row);
+	if (!feedTimer_.isActive())
+		feedTimer_.start();
 	overlay_->appendLine(html);
+}
+
+void BiliDock::flushFeeds()
+{
+	const auto flush = [](QTextBrowser *feed, QStringList &rows) {
+		if (rows.isEmpty())
+			return;
+		// Rows that would be trimmed by the block limit anyway are never laid out.
+		if (rows.size() > kFeedMaxLines)
+			rows.erase(rows.begin(), rows.end() - kFeedMaxLines);
+		QScrollBar *bar = feed->verticalScrollBar();
+		const bool atBottom = bar->value() == bar->maximum();
+		QTextCursor cursor(feed->document());
+		cursor.movePosition(QTextCursor::End);
+		cursor.beginEditBlock();
+		for (const QString &row : rows) {
+			if (!feed->document()->isEmpty())
+				cursor.insertBlock(QTextBlockFormat(), QTextCharFormat());
+			cursor.insertHtml(row);
+		}
+		cursor.endEditBlock();
+		rows.clear();
+		if (atBottom)
+			bar->setValue(bar->maximum());
+	};
+	flush(feedAll_, pendingAll_);
+	flush(feedGifts_, pendingGifts_);
+	flush(feedSuperChats_, pendingSuperChats_);
 }
 
 void BiliDock::appendSystem(const QString &text, const char *color)
