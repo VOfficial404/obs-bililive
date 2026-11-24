@@ -35,6 +35,7 @@ struct PluginSettings {
 	bool overlayHiddenFromCapture = true; // keep it off the stream when display capture is used
 	int overlayOpacity = 40;              // background, percent
 	int overlayFontSize = 16;             // pixels
+	int overlayFadeSeconds = 30;          // lines fade out after this long; 0 keeps them
 	QByteArray overlayGeometry;           // QWidget::saveGeometry()
 	QByteArray hotkeys;                   // JSON object: hotkey name -> obs_hotkey_save() array
 };

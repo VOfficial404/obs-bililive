@@ -48,6 +48,7 @@ constexpr int kSpacing = 2;
 constexpr int kRadius = 8;
 // Chat at 10 fps reads the same as at 60 and costs a fraction of it in busy rooms.
 constexpr int kRepaintMs = 100;
+constexpr qint64 kFadeOutMs = 1000;
 // Fully transparent pixels of a layered window don't receive the mouse; keep the unlocked window grabbable.
 constexpr int kMinUnlockedOpacity = 15;
 constexpr QSize kDefaultSize(360, 420);
@@ -78,6 +79,9 @@ DanmakuOverlay::DanmakuOverlay(QWidget *parent)
 	repaintTimer_.setSingleShot(true);
 	repaintTimer_.setInterval(kRepaintMs);
 	connect(&repaintTimer_, &QTimer::timeout, this, &DanmakuOverlay::render);
+	fadeTimer_.setSingleShot(true);
+	connect(&fadeTimer_, &QTimer::timeout, this, &DanmakuOverlay::render);
+	clock_.start();
 
 	setFontPixelSize(16);
 	resize(kDefaultSize);
@@ -91,7 +95,7 @@ DanmakuOverlay::~DanmakuOverlay() = default;
 
 void DanmakuOverlay::appendLine(const QString &html)
 {
-	lines_.push_back({html, nullptr});
+	lines_.push_back({html, nullptr, clock_.elapsed()});
 	while (lines_.size() > kMaxLines)
 		lines_.pop_front();
 	scheduleRender();
@@ -115,6 +119,13 @@ void DanmakuOverlay::setHeader(const QString &text)
 void DanmakuOverlay::setHint(const QString &text)
 {
 	hint_ = {muted(text), nullptr};
+	scheduleRender();
+}
+
+void DanmakuOverlay::setFadeSeconds(int seconds)
+{
+	fadeMs_ = qMax(0, seconds) * qint64(1000);
+	fadeTimer_.stop();
 	scheduleRender();
 }
 
@@ -256,8 +267,15 @@ QTextDocument *DanmakuOverlay::layOut(Line &line, qreal width)
 void DanmakuOverlay::render()
 {
 	repaintTimer_.stop();
+	fadeTimer_.stop();
 	if (!isVisible())
 		return;
+
+	const qint64 now = clock_.elapsed();
+	if (fadeMs_ > 0) {
+		while (!lines_.empty() && now - lines_.front().arrivedMs >= fadeMs_ + kFadeOutMs)
+			lines_.pop_front();
+	}
 
 	const qreal width = qMax(1, this->width() - 2 * kMargin);
 	const qreal height = this->height() - 2 * kMargin;
@@ -296,8 +314,11 @@ void DanmakuOverlay::render()
 		};
 		for (QTextDocument *document : top)
 			draw(document);
-		for (Line &line : lines_)
+		for (Line &line : lines_) {
+			const qint64 fading = fadeMs_ > 0 ? now - line.arrivedMs - fadeMs_ : 0;
+			painter.setOpacity(fading > 0 ? 1.0 - qreal(fading) / kFadeOutMs : 1.0);
 			draw(line.document.get());
+		}
 	}
 
 	QImage outline = text;
@@ -316,6 +337,12 @@ void DanmakuOverlay::render()
 		painter.drawImage(0, 0, text);
 	}
 	update();
+
+	// Sleep until the oldest line starts fading, then step the fade at the normal repaint rate.
+	if (fadeMs_ > 0 && !lines_.empty()) {
+		const qint64 untilFade = lines_.front().arrivedMs + fadeMs_ - now;
+		fadeTimer_.start(static_cast<int>(qMax<qint64>(untilFade, kRepaintMs)));
+	}
 }
 
 } // namespace bililive

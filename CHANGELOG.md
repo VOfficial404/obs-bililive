@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [0.7.0]
+
+### 新增
+
+- 弹幕悬浮窗支持弹幕自动淡出，和直播姬一样：每条弹幕显示一段时间后在 1 秒内淡出消失。在「弹幕悬浮窗 → 弹幕淡出」里选 10、20、30、60 秒或不淡出，默认 30 秒。
+
 ## [0.6.2]
 
 ### 性能
@@ -96,7 +102,8 @@
 - 在面板里发送弹幕。
 - 简体中文和英文界面。
 
-[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.6.2...HEAD
+[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.7.0...HEAD
+[0.7.0]: https://github.com/VOfficial404/obs-bililive/compare/0.6.2...0.7.0
 [0.6.2]: https://github.com/VOfficial404/obs-bililive/compare/0.6.1...0.6.2
 [0.6.1]: https://github.com/VOfficial404/obs-bililive/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/VOfficial404/obs-bililive/compare/0.5.0...0.6.0

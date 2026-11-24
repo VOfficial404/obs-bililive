@@ -18,6 +18,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #pragma once
 
+#include <QElapsedTimer>
 #include <QFont>
 #include <QImage>
 #include <QTimer>
@@ -56,6 +57,8 @@ public:
 	static bool canHideFromCapture();
 	void setBackgroundOpacity(int percent);
 	void setFontPixelSize(int pixels);
+	// Lines fade out over a second once they are this old, as in LiveHime; 0 keeps them until pushed out.
+	void setFadeSeconds(int seconds);
 
 signals:
 	// Moved or resized by the user.
@@ -72,6 +75,7 @@ private:
 	struct Line {
 		QString html;
 		std::unique_ptr<QTextDocument> document; // laid out on first draw
+		qint64 arrivedMs = 0;                    // on clock_
 	};
 
 	void applyWindowFlags();
@@ -82,6 +86,9 @@ private:
 
 	QSizeGrip *grip_;
 	QTimer repaintTimer_;
+	QTimer fadeTimer_; // wakes render() when the oldest line starts or keeps fading
+	QElapsedTimer clock_;
+	qint64 fadeMs_ = 0;
 	QFont font_;
 	std::deque<Line> lines_;
 	Line header_;

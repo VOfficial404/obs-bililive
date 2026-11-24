@@ -75,6 +75,7 @@ constexpr long kExitStopTimeoutSeconds = 5;
 constexpr int kOverlayGeometrySaveMs = 500;
 constexpr int kOverlayOpacities[] = {0, 25, 40, 60, 80};
 constexpr int kOverlayFontSizes[] = {14, 16, 20, 24};
+constexpr int kOverlayFadeSeconds[] = {0, 10, 20, 30, 60};
 
 constexpr const char *kHotkeyOverlayToggle = "obs_bililive.overlay_toggle";
 constexpr const char *kHotkeyOverlayLock = "obs_bililive.overlay_lock";
@@ -689,6 +690,21 @@ QMenu *BiliDock::buildOverlayMenu(QWidget *parent)
 			persist();
 		});
 	}
+
+	menu->addSection(T("Overlay.Fade"));
+	auto *fadeGroup = new QActionGroup(menu);
+	for (int seconds : kOverlayFadeSeconds) {
+		QAction *action =
+			menu->addAction(seconds ? T("Overlay.FadeSeconds").arg(seconds) : T("Overlay.FadeOff"));
+		action->setCheckable(true);
+		action->setChecked(seconds == settings_.overlayFadeSeconds);
+		fadeGroup->addAction(action);
+		connect(action, &QAction::triggered, this, [this, seconds]() {
+			settings_.overlayFadeSeconds = seconds;
+			overlay_->setFadeSeconds(seconds);
+			persist();
+		});
+	}
 	return menu;
 }
 
@@ -698,6 +714,7 @@ void BiliDock::createOverlay()
 	overlay_->setHint(T("Overlay.Hint"));
 	overlay_->setBackgroundOpacity(settings_.overlayOpacity);
 	overlay_->setFontPixelSize(settings_.overlayFontSize);
+	overlay_->setFadeSeconds(settings_.overlayFadeSeconds);
 	overlay_->setLocked(settings_.overlayLocked);
 	if (!settings_.overlayGeometry.isEmpty())
 		overlay_->restoreGeometry(settings_.overlayGeometry);

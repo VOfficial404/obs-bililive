@@ -58,6 +58,7 @@ PluginSettings loadSettings()
 	obs_data_set_default_bool(data, "overlay_hidden_from_capture", settings.overlayHiddenFromCapture);
 	obs_data_set_default_int(data, "overlay_opacity", settings.overlayOpacity);
 	obs_data_set_default_int(data, "overlay_font_size", settings.overlayFontSize);
+	obs_data_set_default_int(data, "overlay_fade_seconds", settings.overlayFadeSeconds);
 
 	settings.credentials.sessdata = getString(data, "sessdata");
 	settings.credentials.biliJct = getString(data, "bili_jct");
@@ -73,6 +74,7 @@ PluginSettings loadSettings()
 	settings.overlayHiddenFromCapture = obs_data_get_bool(data, "overlay_hidden_from_capture");
 	settings.overlayOpacity = static_cast<int>(obs_data_get_int(data, "overlay_opacity"));
 	settings.overlayFontSize = static_cast<int>(obs_data_get_int(data, "overlay_font_size"));
+	settings.overlayFadeSeconds = static_cast<int>(obs_data_get_int(data, "overlay_fade_seconds"));
 	settings.overlayGeometry = QByteArray::fromBase64(obs_data_get_string(data, "overlay_geometry"));
 	if (obs_data_t *hotkeys = obs_data_get_obj(data, "hotkeys")) {
 		settings.hotkeys = obs_data_get_json(hotkeys);
@@ -108,6 +110,7 @@ void saveSettings(const PluginSettings &settings)
 	obs_data_set_bool(data, "overlay_hidden_from_capture", settings.overlayHiddenFromCapture);
 	obs_data_set_int(data, "overlay_opacity", settings.overlayOpacity);
 	obs_data_set_int(data, "overlay_font_size", settings.overlayFontSize);
+	obs_data_set_int(data, "overlay_fade_seconds", settings.overlayFadeSeconds);
 	obs_data_set_string(data, "overlay_geometry", settings.overlayGeometry.toBase64().constData());
 	if (!settings.hotkeys.isEmpty()) {
 		obs_data_t *hotkeys = obs_data_create_from_json(settings.hotkeys.constData());
