@@ -45,10 +45,7 @@ target_sources(
     src/update.cpp
 )
 target_include_directories(bililive-core PUBLIC src)
-target_link_libraries(
-  bililive-core
-  PUBLIC Qt6::Core CURL::libcurl puff $<$<PLATFORM_ID:Windows>:ws2_32>
-)
+target_link_libraries(bililive-core PUBLIC Qt6::Core CURL::libcurl puff $<$<PLATFORM_ID:Windows>:ws2_32>)
 set_target_properties(bililive-core PROPERTIES AUTOMOC ON POSITION_INDEPENDENT_CODE ON)
 
 add_library(${CMAKE_PROJECT_NAME} MODULE)
