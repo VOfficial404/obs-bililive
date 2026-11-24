@@ -331,7 +331,8 @@ void WssConnection::run(std::shared_ptr<Worker> worker, QString host, quint16 po
 	// renegotiation that curl's Schannel layer can't complete on a CONNECT_ONLY handle (every read then fails).
 	if (tlsBackendIsSchannel())
 		curl_easy_setopt(curl, CURLOPT_SSLVERSION,
-				 static_cast<long>(CURL_SSLVERSION_TLSv1_2 | CURL_SSLVERSION_MAX_TLSv1_2));
+				 static_cast<long>(CURL_SSLVERSION_TLSv1_2) |
+					 static_cast<long>(CURL_SSLVERSION_MAX_TLSv1_2));
 #if LIBCURL_VERSION_NUM >= 0x075500
 	curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https");
 #else
