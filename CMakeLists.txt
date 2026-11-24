@@ -44,7 +44,10 @@ target_sources(
     src/update.cpp
 )
 target_include_directories(bililive-core PUBLIC src)
-target_link_libraries(bililive-core PUBLIC Qt6::Core Qt6::Network CURL::libcurl qrcodegen puff)
+target_link_libraries(
+  bililive-core
+  PUBLIC Qt6::Core Qt6::Network CURL::libcurl qrcodegen puff
+)
 set_target_properties(bililive-core PROPERTIES AUTOMOC ON POSITION_INDEPENDENT_CODE ON)
 
 add_library(${CMAKE_PROJECT_NAME} MODULE)
