@@ -62,6 +62,7 @@ QrDialog::QrDialog(const QString &title, const QString &hint, QWidget *parent)
 	hintLabel->setAlignment(Qt::AlignCenter);
 	image_->setAlignment(Qt::AlignCenter);
 	status_->setAlignment(Qt::AlignCenter);
+	status_->setTextFormat(Qt::PlainText); // shows server messages
 	status_->setWordWrap(true);
 
 	auto *layout = new QVBoxLayout(this);

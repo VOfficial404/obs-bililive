@@ -164,7 +164,7 @@ private:
 	HttpRequest webRequest(const QByteArray &url) const;
 	HttpRequest livehimeRequest(const QByteArray &url, const LivehimeVersion &version) const;
 	Params livehimeBase(const LivehimeVersion &version) const;
-	LivehimeVersion livehimeVersion();
+	LivehimeVersion livehimeVersion(long timeoutSeconds = 15);
 	QString wbiMixinKey();
 
 	mutable std::mutex mutex_;

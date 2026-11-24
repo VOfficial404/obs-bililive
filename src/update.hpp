@@ -19,12 +19,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #pragma once
 
 #include <QString>
+#include <QUrl>
 
 namespace bililive {
 
 struct LatestRelease {
 	QString version; // tag name; empty when the check failed
-	QString url;     // release page
+	QUrl url;        // release page on github.com, built from the tag
 };
 
 // Blocking GitHub API call; call from worker threads only.

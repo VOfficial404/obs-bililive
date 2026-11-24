@@ -42,13 +42,19 @@ if (( ! (${skips[(Ie)all]} + ${skips[(Ie)deps]}) )) {
 
   # obs-studio comes from the GitHub release matching buildspec.json: it is the same package the
   # obsproject PPA ships, but Launchpad often answers 503. The PPA stays as the fallback.
+  # The .deb is installed with root rights, so only a package whose SHA-256 is pinned here is used.
+  local -A obs_deb_sha256=(
+    obs-studio_31.1.1-0obsproject1.noble_amd64.deb 4d6c44540c73e937e23cf47ef180d0ef825fbfb63755866f377aa63b9eb8e7be
+  )
   local obs_version="$(jq -r '.dependencies["obs-studio"].version' ${project_root}/buildspec.json)"
   local obs_deb="${project_root}/.deps/obs-studio_${obs_version}-0obsproject1.$(lsb_release -cs)_amd64.deb"
   mkdir -p ${obs_deb:h}
 
-  if [[ -z ${suffix} ]] && curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+  if [[ -z ${suffix} && -n ${obs_deb_sha256[${obs_deb:t}]} ]] && \
+    curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
     --output ${obs_deb} \
-    "https://github.com/obsproject/obs-studio/releases/download/${obs_version}/${obs_deb:t}"
+    "https://github.com/obsproject/obs-studio/releases/download/${obs_version}/${obs_deb:t}" && \
+    print "${obs_deb_sha256[${obs_deb:t}]}  ${obs_deb}" | sha256sum --check --quiet
   then
     sudo apt-get update
     sudo apt-get install ${apt_args} ${_build_packages} ${obs_deb}

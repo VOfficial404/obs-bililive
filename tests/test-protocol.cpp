@@ -180,6 +180,27 @@ private slots:
 		QVERIFY(!danmaku::expandPacket(batch, out));
 	}
 
+	// A batch that inflates past the cap is refused instead of being decompressed into memory.
+	void zlibBombIsRefused()
+	{
+		QByteArray inner;
+		const QByteArray one =
+			danmaku::encodePacket(danmaku::kOpMessage, QByteArray(60000, ' '), danmaku::kVersionJson);
+		while (inner.size() <= danmaku::kMaxInflatedSize)
+			inner += one;
+		const danmaku::Packet bomb{danmaku::kVersionZlib, danmaku::kOpMessage, qCompress(inner, 9).mid(4)};
+		QVERIFY(bomb.body.size() < 64 * 1024);
+		std::vector<danmaku::Packet> out;
+		QVERIFY(!danmaku::expandPacket(bomb, out));
+		QVERIFY(out.empty());
+
+		// A large batch below the cap still expands.
+		const QByteArray fits = inner.left(inner.size() / one.size() / 2 * one.size());
+		const danmaku::Packet ok{danmaku::kVersionZlib, danmaku::kOpMessage, qCompress(fits, 9).mid(4)};
+		QVERIFY(danmaku::expandPacket(ok, out));
+		QCOMPARE(out.size(), size_t(fits.size() / one.size()));
+	}
+
 	void parsesDanmaku()
 	{
 		const auto event = danmaku::parseCommand(

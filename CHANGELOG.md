@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+## [0.7.1]
+
+### 安全
+
+- 下载直播间封面时不再带上登录 Cookie，且只从 B 站图片 CDN（`*.hdslb.com`）的 https 地址下载。
+- 所有网络请求只允许 https；带登录 Cookie 的请求不再跟随重定向，避免 Cookie 被重定向到其他网站；响应体大小设上限。
+- 弹幕压缩包改用有输出上限的解压（zlib 官方的 puff），被篡改的数据包无法把内存撑爆。
+- 面板里显示服务器内容的文字一律按纯文本显示，不会被当作 HTML 解析；弹幕连接被拒绝时只显示错误码。
+- 更新提示打开的链接由版本号拼出，只会指向本项目的 GitHub 发布页。
+- Windows 安装程序把插件目录的权限改为只有管理员可写，防止其他用户往 OBS 会加载的目录里放 DLL。
+- Ubuntu 构建校验下载的 OBS 安装包的 SHA-256。
+
+### 修复
+
+- 连续点两次「扫码登录」时，第二张二维码扫了没反应。
+- 退出登录或切换账号时，还在进行中的请求（加载账号、开播等）的结果会作用到下一个账号，甚至在退出后开始推流。
+- 开播、关播或人脸认证进行中点「刷新」会打乱状态；刷新也不会再把正在推流的直播显示成未开播。
+- 关闭 OBS 时最多会卡住几十秒：进行中的请求现在会立刻中止，连接超时为 5 秒。
+- 弹幕连接断流或半开时会一直卡住：现在 75 秒收不到数据、或 15 秒内没连上就自动重连。
+- 退出登录或换直播间后，统计数字还显示上一个账号的；加载直播间失败时账号名不显示。
+
 ## [0.7.0]
 
 ### 新增
@@ -102,7 +123,8 @@
 - 在面板里发送弹幕。
 - 简体中文和英文界面。
 
-[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.7.0...HEAD
+[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.7.1...HEAD
+[0.7.1]: https://github.com/VOfficial404/obs-bililive/compare/0.7.0...0.7.1
 [0.7.0]: https://github.com/VOfficial404/obs-bililive/compare/0.6.2...0.7.0
 [0.6.2]: https://github.com/VOfficial404/obs-bililive/compare/0.6.1...0.6.2
 [0.6.1]: https://github.com/VOfficial404/obs-bililive/compare/0.6.0...0.6.1

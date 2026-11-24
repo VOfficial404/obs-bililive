@@ -20,6 +20,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <QtEndian>
 
+extern "C" {
+#include <puff/puff.h>
+}
+
 namespace bililive::danmaku {
 
 namespace {
@@ -52,6 +56,33 @@ bool splitPackets(const QByteArray &data, std::vector<Packet> &out)
 		offset += static_cast<qsizetype>(length);
 	}
 	return true;
+}
+
+// A zlib stream (RFC 1950) inflated into at most `limit` bytes; empty when it is malformed or larger.
+// Decompression never allocates more than `limit`, so a crafted batch can't exhaust memory.
+QByteArray inflateBounded(const QByteArray &zlib, qsizetype limit)
+{
+	const auto *in = reinterpret_cast<const unsigned char *>(zlib.constData());
+	// 2-byte header: deflate method, window size, no preset dictionary.
+	if (zlib.size() < 2 || (in[0] & 0x0f) != 8 || (in[0] >> 4) > 7 || (in[1] & 0x20) ||
+	    ((in[0] << 8) | in[1]) % 31 != 0)
+		return {};
+
+	// Start near the usual ratio and grow; each attempt is bounded by the buffer it gets.
+	qsizetype capacity = qMin(limit, zlib.size() * 8 + 1024);
+	for (;;) {
+		QByteArray out(capacity, Qt::Uninitialized);
+		unsigned long outLength = static_cast<unsigned long>(capacity);
+		unsigned long inLength = static_cast<unsigned long>(zlib.size() - 2);
+		const int status = puff(reinterpret_cast<unsigned char *>(out.data()), &outLength, in + 2, &inLength);
+		if (status == 0) {
+			out.truncate(static_cast<qsizetype>(outLength));
+			return out;
+		}
+		if (status != 1 || capacity >= limit) // 1: output space exhausted
+			return {};
+		capacity = qMin(limit, capacity * 4);
+	}
 }
 
 } // namespace
@@ -98,13 +129,7 @@ bool expandPacket(const Packet &packet, std::vector<Packet> &out)
 		return true;
 	}
 
-	// qUncompress wants a big-endian size hint in front of the zlib stream; it grows the
-	// buffer when the hint is too small, so a generous guess is enough.
-	QByteArray input(4, Qt::Uninitialized);
-	const quint32 hint = static_cast<quint32>(qMin<qsizetype>(packet.body.size() * 8 + 1024, kMaxPacketSize));
-	qToBigEndian<quint32>(hint, input.data());
-	input += packet.body;
-	const QByteArray inflated = qUncompress(input);
+	const QByteArray inflated = inflateBounded(packet.body, kMaxInflatedSize);
 	if (inflated.isEmpty())
 		return false;
 

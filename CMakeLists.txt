@@ -24,6 +24,11 @@ add_library(qrcodegen STATIC deps/qrcodegen/qrcodegen.cpp)
 target_include_directories(qrcodegen PUBLIC deps)
 set_target_properties(qrcodegen PROPERTIES COMPILE_WARNING_AS_ERROR OFF POSITION_INDEPENDENT_CODE ON)
 
+# zlib's reference inflater: decompresses into a caller-sized buffer, so chat batches can't inflate without bound.
+add_library(puff STATIC deps/puff/puff.c)
+target_include_directories(puff PUBLIC deps)
+set_target_properties(puff PROPERTIES COMPILE_WARNING_AS_ERROR OFF POSITION_INDEPENDENT_CODE ON)
+
 # Protocol code without OBS dependencies, shared by the plugin and the tests.
 add_library(bililive-core STATIC)
 target_sources(
@@ -39,7 +44,7 @@ target_sources(
     src/update.cpp
 )
 target_include_directories(bililive-core PUBLIC src)
-target_link_libraries(bililive-core PUBLIC Qt6::Core Qt6::Network CURL::libcurl qrcodegen)
+target_link_libraries(bililive-core PUBLIC Qt6::Core Qt6::Network CURL::libcurl qrcodegen puff)
 set_target_properties(bililive-core PROPERTIES AUTOMOC ON POSITION_INDEPENDENT_CODE ON)
 
 add_library(${CMAKE_PROJECT_NAME} MODULE)

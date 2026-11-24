@@ -143,6 +143,7 @@ ctest --test-dir build_x86_64
 - [bilibili-API-collect](https://github.com/SocialSisterYi/bilibili-API-collect)：B 站接口文档
 - [StartLive](https://github.com/Radekyspec/StartLive)：直播姬开播流程的参考实现
 - [QR Code generator library](https://github.com/nayuki/QR-Code-generator)：二维码生成（MIT）
+- [puff](https://github.com/madler/zlib/tree/develop/contrib/puff)：zlib 作者写的精简解压器，用来解压弹幕（zlib 许可）
 
 ## 许可
 

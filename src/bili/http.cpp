@@ -20,15 +20,32 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <curl/curl.h>
 
+#include <atomic>
+
 namespace bililive::bili {
 
 namespace {
 
+// No Bilibili or GitHub response the plugin reads comes near this; a larger body is refused.
+constexpr qsizetype kMaxResponseBytes = 16 * 1024 * 1024;
+constexpr long kConnectTimeoutSeconds = 5;
+constexpr long kMaxRedirects = 3;
+
+std::atomic<bool> g_aborted{false};
+
 size_t appendBody(char *data, size_t size, size_t count, void *userData)
 {
 	const size_t bytes = size * count;
-	static_cast<QByteArray *>(userData)->append(data, static_cast<qsizetype>(bytes));
+	auto *body = static_cast<QByteArray *>(userData);
+	if (body->size() + static_cast<qsizetype>(bytes) > kMaxResponseBytes)
+		return 0; // curl aborts the transfer
+	body->append(data, static_cast<qsizetype>(bytes));
 	return bytes;
+}
+
+int checkAborted(void *, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+{
+	return g_aborted.load(std::memory_order_relaxed) ? 1 : 0;
 }
 
 size_t collectHeader(char *data, size_t size, size_t count, void *userData)
@@ -72,9 +89,22 @@ HttpResponse httpPerform(const HttpRequest &request)
 	curl_easy_setopt(curl, CURLOPT_URL, request.url.constData());
 	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 	curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
-	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+	// Only https, also after redirects. Requests carrying the session never follow redirects: CURLOPT_COOKIE
+	// would go along to whatever host the redirect names.
+#if LIBCURL_VERSION_NUM >= 0x075500
+	curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "https");
+	curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "https");
+#else
+	curl_easy_setopt(curl, CURLOPT_PROTOCOLS, static_cast<long>(CURLPROTO_HTTPS));
+	curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, static_cast<long>(CURLPROTO_HTTPS));
+#endif
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, request.cookie.isEmpty() ? 1L : 0L);
+	curl_easy_setopt(curl, CURLOPT_MAXREDIRS, kMaxRedirects);
 	curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, kConnectTimeoutSeconds);
 	curl_easy_setopt(curl, CURLOPT_TIMEOUT, request.timeoutSeconds);
+	curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+	curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, checkAborted);
 	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errorBuffer);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendBody);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
@@ -117,6 +147,11 @@ HttpResponse httpPerform(const HttpRequest &request)
 	curl_slist_free_all(headers);
 	curl_easy_cleanup(curl);
 	return response;
+}
+
+void httpAbortAll()
+{
+	g_aborted.store(true, std::memory_order_relaxed);
 }
 
 } // namespace bililive::bili

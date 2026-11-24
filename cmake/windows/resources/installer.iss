@@ -49,3 +49,8 @@ english.FinishedLabel=BiliLive for OBS is installed. Start (or restart) OBS and 
 
 [Files]
 Source: "{#MySource}\*"; DestDir: "{app}"; Excludes: "*.pdb"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Run]
+; ProgramData lets every user create files in new folders, and OBS loads DLLs from this one for whoever starts it.
+; Drop the inherited ACL: only Administrators and SYSTEM can write, Users can only read and run.
+Filename: "{sys}\icacls.exe"; Parameters: """{app}"" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F /grant:r *S-1-5-18:(OI)(CI)F /grant:r *S-1-5-32-545:(OI)(CI)RX"; Flags: runhidden waituntilterminated

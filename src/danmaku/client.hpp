@@ -64,6 +64,7 @@ private:
 	std::shared_ptr<bili::BiliApi> api_;
 	QTcpSocket socket_;
 	QTimer heartbeat_;
+	QTimer stallTimer_; // restarted by every byte received; fires when the connection has gone quiet
 	QTimer retryTimer_;
 	PacketReader reader_;
 	State state_ = State::Idle;

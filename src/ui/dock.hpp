@@ -113,6 +113,18 @@ private:
 	void appendSystem(const QString &text, const char *color = nullptr);
 	void appendError(const bili::ApiResult &result);
 	void updateStats();
+	void resetStats();
+
+	// runner_.run for requests made on behalf of the logged-in account: the result is dropped when the
+	// account was logged out or reloaded in the meantime, so it can't act on the next session.
+	template<typename Work, typename Done> void runForAccount(Work work, Done done)
+	{
+		const quint64 session = session_;
+		runner_.run(std::move(work), [this, session, done = std::move(done)](const auto &result) {
+			if (session == session_)
+				done(result);
+		});
+	}
 
 	std::shared_ptr<bili::BiliApi> api_;
 	PluginSettings settings_;
@@ -140,6 +152,7 @@ private:
 	QStringList pendingSuperChats_;
 	QTimer feedTimer_;
 	bool qrPollInFlight_ = false;
+	quint64 session_ = 0; // bumped by logout() and loadAccount(), see runForAccount()
 
 	QStackedWidget *pages_ = nullptr;
 	QLabel *accountLabel_ = nullptr;

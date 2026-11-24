@@ -243,6 +243,7 @@ QPixmap coverThumbnail(const QImage &image)
 QLabel *addStatTile(QHBoxLayout *row, QWidget *parent, const QString &caption)
 {
 	auto *value = new QLabel(QStringLiteral("-"), parent);
+	value->setTextFormat(Qt::PlainText);
 	value->setObjectName(QStringLiteral("bililiveStatValue"));
 	value->setAlignment(Qt::AlignCenter);
 	auto *label = new QLabel(caption, parent);
@@ -288,6 +289,8 @@ BiliDock::BiliDock(QWidget *parent)
 
 BiliDock::~BiliDock()
 {
+	// OBS is closing: fail running requests now instead of waiting out their timeouts.
+	bili::httpAbortAll();
 	obs_frontend_remove_event_callback(onFrontendEvent, this);
 	obs_hotkey_unregister(overlayToggleHotkey_);
 	obs_hotkey_unregister(overlayLockHotkey_);
@@ -387,7 +390,10 @@ QWidget *BiliDock::buildMainPage()
 	connect(coverButton_, &QPushButton::clicked, this, &BiliDock::chooseCover);
 	coverButton_->hide();
 
+	// Labels fed from server data are plain text: a QLabel would otherwise render anything that looks like
+	// HTML, including <img> that loads files or network shares.
 	accountLabel_ = new QLabel(accountCard);
+	accountLabel_->setTextFormat(Qt::PlainText);
 	accountLabel_->setObjectName(QStringLiteral("bililiveName"));
 	accountLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
 	liveState_ = new QLabel(accountCard);
@@ -400,6 +406,7 @@ QWidget *BiliDock::buildMainPage()
 	// Other danmaku tools (blivechat and the like) connect on their own with this number.
 	roomIdRow_ = new QWidget(accountCard);
 	roomIdLabel_ = new QLabel(roomIdRow_);
+	roomIdLabel_->setTextFormat(Qt::PlainText);
 	roomIdLabel_->setObjectName(QStringLiteral("bililiveMuted"));
 	roomIdLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
 	auto *copyRoom = new QToolButton(roomIdRow_);
@@ -413,6 +420,7 @@ QWidget *BiliDock::buildMainPage()
 	roomIdLayout->addStretch(1);
 	roomIdRow_->hide();
 	danmakuState_ = new QLabel(accountCard);
+	danmakuState_->setTextFormat(Qt::PlainText);
 	danmakuState_->setObjectName(QStringLiteral("bililiveMuted"));
 
 	auto *identity = new QVBoxLayout();
@@ -496,6 +504,7 @@ QWidget *BiliDock::buildMainPage()
 	connect(liveButton_, &QPushButton::clicked, this, [this]() { live_ ? stopLive() : startLive(); });
 
 	status_ = new QLabel(roomPanel_);
+	status_->setTextFormat(Qt::PlainText);
 	status_->setObjectName(QStringLiteral("bililiveMuted"));
 	status_->setWordWrap(true);
 	status_->hide();
@@ -629,7 +638,7 @@ void BiliDock::checkForUpdate()
 			    const QString text = T("Update.Available").arg(release.version);
 			    QAction *action = new QAction(text, menu_);
 			    connect(action, &QAction::triggered, this,
-				    [url = release.url]() { QDesktopServices::openUrl(QUrl(url)); });
+				    [url = release.url]() { QDesktopServices::openUrl(url); });
 			    menu_->insertAction(menu_->actions().value(0), action);
 			    menu_->insertSeparator(menu_->actions().value(1));
 			    appendSystem(T("Update.Notice").arg(release.version, current), kColorGift);
@@ -847,8 +856,11 @@ void BiliDock::closeQrDialog()
 {
 	qrPurpose_ = QrPurpose::None;
 	qrTimer_.stop();
-	if (qrDialog_)
+	if (qrDialog_) {
+		// The dialog is deleted later; its destroyed() must not tear down the flow that replaces it.
+		disconnect(qrDialog_, &QObject::destroyed, this, nullptr);
 		qrDialog_->close();
+	}
 }
 
 void BiliDock::pollQr()
@@ -893,18 +905,18 @@ void BiliDock::pollQr()
 	}
 
 	const qint64 roomId = room_.roomId;
-	runner_.run([api, roomId]() { return api->faceAuthStatus(roomId); },
-		    [this](const ApiResult &result) {
-			    qrPollInFlight_ = false;
-			    if (qrPurpose_ != QrPurpose::FaceAuth)
-				    return;
-			    if (result.object().value(QLatin1String("is_identified")).toBool()) {
-				    closeQrDialog();
-				    appendSystem(T("Face.Done"), kColorSystem);
-				    busy_ = false;
-				    startLive();
-			    }
-		    });
+	runForAccount([api, roomId]() { return api->faceAuthStatus(roomId); },
+		      [this](const ApiResult &result) {
+			      qrPollInFlight_ = false;
+			      if (qrPurpose_ != QrPurpose::FaceAuth)
+				      return;
+			      if (result.object().value(QLatin1String("is_identified")).toBool()) {
+				      closeQrDialog();
+				      appendSystem(T("Face.Done"), kColorSystem);
+				      busy_ = false;
+				      startLive();
+			      }
+		      });
 }
 
 void BiliDock::logout()
@@ -915,13 +927,18 @@ void BiliDock::logout()
 	previous->setCredentials(settings_.credentials);
 	runner_.run([previous]() { return previous->logout(); }, [](const ApiResult &) {});
 
+	session_++; // results of requests made for this account are dropped from now on
 	danmaku_->stop();
 	settings_.credentials = {};
 	api_->setCredentials({});
 	persist();
 	user_ = {};
 	room_ = {};
+	setBusy(false, QString());
 	setLive(false);
+	resetStats();
+	qrPollInFlight_ = false;        // a dropped face-auth poll would otherwise block polling for good
+	coverButton_->setEnabled(true); // likewise for a dropped cover upload
 	pendingAll_.clear();
 	pendingGifts_.clear();
 	pendingSuperChats_.clear();
@@ -936,7 +953,8 @@ void BiliDock::logout()
 
 void BiliDock::loadAccount()
 {
-	if (!settings_.credentials.loggedIn())
+	// Refresh while going live, ending or face-verifying would clobber that operation's state.
+	if (!settings_.credentials.loggedIn() || busy_)
 		return;
 
 	struct AccountLoad {
@@ -945,10 +963,11 @@ void BiliDock::loadAccount()
 		bili::AreaList areas;
 	};
 
+	session_++;
 	pages_->setCurrentIndex(1);
 	setBusy(true, T("Status.Loading"));
 	const auto api = api_;
-	runner_.run(
+	runForAccount(
 		[api]() {
 			AccountLoad load;
 			load.user = api->fetchUser();
@@ -974,19 +993,21 @@ void BiliDock::loadAccount()
 			}
 
 			user_ = load.user;
+			accountLabel_->setText(user_.name);
 			settings_.credentials = api_->credentials(); // picks up buvid3
 			persist();
 			if (!load.room.result.ok()) {
 				appendError(load.room.result);
 				return;
 			}
+			if (room_.roomId != load.room.roomId)
+				resetStats();
 			room_ = load.room;
 			if (load.areas.result.ok())
 				areas_ = load.areas.groups;
 			else
 				appendError(load.areas.result);
 
-			accountLabel_->setText(user_.name);
 			roomIdLabel_->setText(T("Room.Id").arg(room_.roomId));
 			roomIdRow_->setVisible(room_.roomId != 0);
 			coverButton_->setVisible(room_.roomId != 0);
@@ -1003,7 +1024,8 @@ void BiliDock::loadAccount()
 			if (settings_.areaId == 0)
 				settings_.areaId = room_.areaId;
 			populateAreas();
-			setLive(room_.liveStatus == 1);
+			// get_info lags behind a broadcast this dock just started; don't drop a live state OBS is streaming.
+			setLive(room_.liveStatus == 1 || (live_ && obs_frontend_streaming_active()));
 			setBusy(false, QString());
 			danmaku_->start(room_.roomId);
 		});
@@ -1012,15 +1034,15 @@ void BiliDock::loadAccount()
 void BiliDock::createRoom()
 {
 	const auto api = api_;
-	runner_.run([api]() { return api->createRoom(); },
-		    [this](const ApiResult &result) {
-			    if (result.ok() || result.code == kAlreadyHasRoom) {
-				    appendSystem(T("Room.Created"), kColorSystem);
-				    loadAccount();
-			    } else {
-				    appendError(result);
-			    }
-		    });
+	runForAccount([api]() { return api->createRoom(); },
+		      [this](const ApiResult &result) {
+			      if (result.ok() || result.code == kAlreadyHasRoom) {
+				      appendSystem(T("Room.Created"), kColorSystem);
+				      loadAccount();
+			      } else {
+				      appendError(result);
+			      }
+		      });
 }
 
 /* Areas */
@@ -1080,7 +1102,7 @@ void BiliDock::startLive()
 	const qint64 roomId = room_.roomId;
 	const auto api = api_;
 	setBusy(true, T("Live.Starting"));
-	runner_.run(
+	runForAccount(
 		[api, roomId, areaId, title, titleChanged]() {
 			StartLoad load;
 			load.title.code = 0;
@@ -1135,17 +1157,17 @@ void BiliDock::stopLive()
 
 	const qint64 roomId = room_.roomId;
 	const auto api = api_;
-	runner_.run([api, roomId]() { return api->stopLive(roomId); },
-		    [this](const ApiResult &result) {
-			    if (!result.ok()) {
-				    setBusy(false, QString());
-				    appendError(result);
-				    return;
-			    }
-			    setLive(false);
-			    setBusy(false, T("Live.Stopped"));
-			    appendSystem(T("Live.Stopped"), kColorSystem);
-		    });
+	runForAccount([api, roomId]() { return api->stopLive(roomId); },
+		      [this](const ApiResult &result) {
+			      if (!result.ok()) {
+				      setBusy(false, QString());
+				      appendError(result);
+				      return;
+			      }
+			      setLive(false);
+			      setBusy(false, T("Live.Stopped"));
+			      appendSystem(T("Live.Stopped"), kColorSystem);
+		      });
 }
 
 void BiliDock::loadCover(const QString &url)
@@ -1157,12 +1179,12 @@ void BiliDock::loadCover(const QString &url)
 	const auto api = api_;
 	// hdslb resizes on the fly; a small copy is plenty for the thumbnail.
 	const QString small = url + QStringLiteral("@320w.jpg");
-	runner_.run([api, small]() { return api->downloadImage(small); },
-		    [this](const QByteArray &data) {
-			    const QImage image = QImage::fromData(data);
-			    if (!image.isNull())
-				    setCoverImage(image);
-		    });
+	runForAccount([api, small]() { return api->downloadImage(small); },
+		      [this](const QByteArray &data) {
+			      const QImage image = QImage::fromData(data);
+			      if (!image.isNull())
+				      setCoverImage(image);
+		      });
 }
 
 void BiliDock::setCoverImage(const QImage &image)
@@ -1193,16 +1215,16 @@ void BiliDock::chooseCover()
 	coverButton_->setEnabled(false);
 	appendSystem(T("Cover.Uploading"));
 	const auto api = api_;
-	runner_.run([api, jpeg]() { return api->uploadCover(jpeg, "image/jpeg"); },
-		    [this, image](const ApiResult &result) {
-			    coverButton_->setEnabled(true);
-			    if (!result.ok()) {
-				    appendError(result);
-				    return;
-			    }
-			    setCoverImage(image);
-			    appendSystem(T("Cover.Uploaded"), kColorSystem);
-		    });
+	runForAccount([api, jpeg]() { return api->uploadCover(jpeg, "image/jpeg"); },
+		      [this, image](const ApiResult &result) {
+			      coverButton_->setEnabled(true);
+			      if (!result.ok()) {
+				      appendError(result);
+				      return;
+			      }
+			      setCoverImage(image);
+			      appendSystem(T("Cover.Uploaded"), kColorSystem);
+		      });
 }
 
 void BiliDock::saveTitle()
@@ -1212,15 +1234,15 @@ void BiliDock::saveTitle()
 		return;
 	const qint64 roomId = room_.roomId;
 	const auto api = api_;
-	runner_.run([api, roomId, title]() { return api->updateTitle(roomId, title); },
-		    [this, title](const ApiResult &result) {
-			    if (!result.ok()) {
-				    appendError(result);
-				    return;
-			    }
-			    room_.title = title;
-			    appendSystem(T("Title.Saved").arg(title), kColorSystem);
-		    });
+	runForAccount([api, roomId, title]() { return api->updateTitle(roomId, title); },
+		      [this, title](const ApiResult &result) {
+			      if (!result.ok()) {
+				      appendError(result);
+				      return;
+			      }
+			      room_.title = title;
+			      appendSystem(T("Title.Saved").arg(title), kColorSystem);
+		      });
 }
 
 void BiliDock::saveNews()
@@ -1231,15 +1253,16 @@ void BiliDock::saveNews()
 	const qint64 roomId = room_.roomId;
 	const qint64 uid = user_.uid;
 	const auto api = api_;
-	runner_.run([api, roomId, uid, news]() { return api->updateRoomNews(roomId, uid, news); },
-		    [this, news](const ApiResult &result) {
-			    if (!result.ok()) {
-				    appendError(result);
-				    return;
-			    }
-			    room_.news = news;
-			    appendSystem(news.isEmpty() ? T("News.Cleared") : T("News.Saved").arg(news), kColorSystem);
-		    });
+	runForAccount([api, roomId, uid, news]() { return api->updateRoomNews(roomId, uid, news); },
+		      [this, news](const ApiResult &result) {
+			      if (!result.ok()) {
+				      appendError(result);
+				      return;
+			      }
+			      room_.news = news;
+			      appendSystem(news.isEmpty() ? T("News.Cleared") : T("News.Saved").arg(news),
+					   kColorSystem);
+		      });
 }
 
 void BiliDock::sendDanmaku()
@@ -1250,14 +1273,14 @@ void BiliDock::sendDanmaku()
 	sendButton_->setEnabled(false);
 	const qint64 roomId = room_.roomId;
 	const auto api = api_;
-	runner_.run([api, roomId, text]() { return api->sendDanmaku(roomId, text); },
-		    [this](const ApiResult &result) {
-			    sendButton_->setEnabled(true);
-			    if (result.ok())
-				    sendEdit_->clear();
-			    else
-				    appendError(result);
-		    });
+	runForAccount([api, roomId, text]() { return api->sendDanmaku(roomId, text); },
+		      [this](const ApiResult &result) {
+			      sendButton_->setEnabled(true);
+			      if (result.ok())
+				      sendEdit_->clear();
+			      else
+				      appendError(result);
+		      });
 }
 
 /* State */
@@ -1467,6 +1490,12 @@ void BiliDock::appendError(const ApiResult &result)
 					       .arg(result.code);
 	obs_log(LOG_WARNING, "%s", text.toUtf8().constData());
 	appendSystem(text, kColorError);
+}
+
+void BiliDock::resetStats()
+{
+	watched_ = online_ = likes_ = followers_ = -1;
+	updateStats();
 }
 
 void BiliDock::updateStats()

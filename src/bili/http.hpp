@@ -56,4 +56,7 @@ void parseSetCookieHeader(const QByteArray &line, QHash<QByteArray, QByteArray> 
 // Blocking; call from worker threads only.
 HttpResponse httpPerform(const HttpRequest &request);
 
+// Makes every running and future request fail at once; for shutdown, so workers don't hold OBS open.
+void httpAbortAll();
+
 } // namespace bililive::bili

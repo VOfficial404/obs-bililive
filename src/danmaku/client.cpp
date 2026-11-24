@@ -26,6 +26,10 @@ namespace bililive::danmaku {
 namespace {
 
 constexpr int kHeartbeatMs = 30 * 1000;
+// The server answers every heartbeat, so this long without data means a dead or half-open connection.
+constexpr int kStallMs = 75 * 1000;
+// Connecting and the auth reply have to finish within this.
+constexpr int kHandshakeMs = 15 * 1000;
 constexpr int kMaxRetryDelaySeconds = 30;
 
 } // namespace
@@ -36,9 +40,11 @@ DanmakuClient::DanmakuClient(std::shared_ptr<bili::BiliApi> api, QObject *parent
 {
 	heartbeat_.setInterval(kHeartbeatMs);
 	retryTimer_.setSingleShot(true);
+	stallTimer_.setSingleShot(true);
 
 	connect(&heartbeat_, &QTimer::timeout, this, [this]() { socket_.write(encodePacket(kOpHeartbeat, {})); });
 	connect(&retryTimer_, &QTimer::timeout, this, &DanmakuClient::fetchInfo);
+	connect(&stallTimer_, &QTimer::timeout, this, [this]() { retry(QStringLiteral("timeout")); });
 	connect(&socket_, &QTcpSocket::connected, this, &DanmakuClient::onConnected);
 	connect(&socket_, &QTcpSocket::readyRead, this, &DanmakuClient::onReadyRead);
 	connect(&socket_, &QTcpSocket::disconnected, this, &DanmakuClient::onDisconnected);
@@ -68,6 +74,7 @@ void DanmakuClient::stop()
 	roomId_ = 0;
 	heartbeat_.stop();
 	retryTimer_.stop();
+	stallTimer_.stop();
 	socket_.abort();
 	reader_.reset();
 	setState(State::Idle);
@@ -102,6 +109,7 @@ void DanmakuClient::connectToHost()
 	reader_.reset();
 	socket_.abort();
 	socket_.connectToHost(host.host, host.port);
+	stallTimer_.start(kHandshakeMs);
 }
 
 void DanmakuClient::onConnected()
@@ -122,6 +130,7 @@ void DanmakuClient::onConnected()
 void DanmakuClient::onReadyRead()
 {
 	std::vector<Packet> packets;
+	stallTimer_.start(state_ == State::Connected ? kStallMs : kHandshakeMs);
 	if (!reader_.feed(socket_.readAll(), packets)) {
 		retry(QStringLiteral("corrupt packet stream"));
 		return;
@@ -147,6 +156,7 @@ void DanmakuClient::retry(const QString &reason)
 	if (roomId_ == 0 || retryTimer_.isActive())
 		return;
 	heartbeat_.stop();
+	stallTimer_.stop();
 	attempt_++;
 	hostIndex_++;
 	const int delaySeconds = qMin(kMaxRetryDelaySeconds, 1 << qMin(attempt_, 5));
@@ -177,13 +187,16 @@ void DanmakuClient::handlePacket(const Packet &packet)
 		case kOpAuthReply: {
 			const QJsonObject reply = QJsonDocument::fromJson(message.body).object();
 			if (reply.value(QLatin1String("code")).toInt(-1) != 0) {
-				retry(QStringLiteral("auth rejected: %1").arg(QString::fromUtf8(message.body)));
+				// The reply body is server data on an unencrypted socket: report only the code.
+				retry(QStringLiteral("auth rejected: %1")
+					      .arg(reply.value(QLatin1String("code")).toInt(-1)));
 				return;
 			}
 			attempt_ = 0;
 			setState(State::Connected);
 			socket_.write(encodePacket(kOpHeartbeat, {}));
 			heartbeat_.start();
+			stallTimer_.start(kStallMs);
 			break;
 		}
 		case kOpMessage:

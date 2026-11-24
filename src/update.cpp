@@ -22,6 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QStringList>
 
 #include <utility>
@@ -39,9 +40,13 @@ LatestRelease fetchLatestRelease()
 	if (!response.error.isEmpty() || response.status != 200)
 		return {};
 
-	const QJsonObject release = QJsonDocument::fromJson(response.body).object();
-	return {release.value(QLatin1String("tag_name")).toString(),
-		release.value(QLatin1String("html_url")).toString()};
+	// The link is built here rather than taken from html_url, so a tampered response can't make the
+	// update menu open some other URL or scheme.
+	const QString tag = QJsonDocument::fromJson(response.body).object().value(QLatin1String("tag_name")).toString();
+	static const QRegularExpression kTag(QStringLiteral("^[0-9A-Za-z._-]{1,32}$"));
+	if (!kTag.match(tag).hasMatch())
+		return {};
+	return {tag, QUrl(QStringLiteral("https://github.com/VOfficial404/obs-bililive/releases/tag/") + tag)};
 }
 
 bool isNewerVersion(const QString &candidate, const QString &current)

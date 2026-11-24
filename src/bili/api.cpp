@@ -155,7 +155,7 @@ Params BiliApi::livehimeBase(const LivehimeVersion &version) const
 	};
 }
 
-BiliApi::LivehimeVersion BiliApi::livehimeVersion()
+BiliApi::LivehimeVersion BiliApi::livehimeVersion(long timeoutSeconds)
 {
 	{
 		std::lock_guard lock(mutex_);
@@ -169,6 +169,7 @@ BiliApi::LivehimeVersion BiliApi::livehimeVersion()
 					  {QStringLiteral("ts"), QString::number(now())}},
 					 kLivehimeAppKey, kLivehimeAppSecret));
 	request.userAgent = kWebUserAgent;
+	request.timeoutSeconds = timeoutSeconds;
 	const ApiResult result = perform(request);
 	const QJsonObject data = result.object();
 	const QString version = data.value(QLatin1String("curr_version")).toString();
@@ -383,7 +384,14 @@ ApiResult BiliApi::updateRoomNews(qint64 roomId, qint64 uid, const QString &cont
 
 QByteArray BiliApi::downloadImage(const QString &url)
 {
-	const HttpResponse response = httpPerform(webRequest(url.toUtf8()));
+	// Covers come from server data; fetch them only from Bilibili's image CDN, and without the session cookie.
+	const QUrl parsed(url);
+	if (parsed.scheme() != QLatin1String("https") || !parsed.host().endsWith(QLatin1String(".hdslb.com")))
+		return {};
+	HttpRequest request;
+	request.url = parsed.toEncoded();
+	request.userAgent = kWebUserAgent;
+	const HttpResponse response = httpPerform(request);
 	return response.error.isEmpty() && response.status == 200 ? response.body : QByteArray();
 }
 
@@ -452,7 +460,7 @@ StartLiveResult BiliApi::startLive(qint64 roomId, int areaId)
 
 ApiResult BiliApi::stopLive(qint64 roomId, long timeoutSeconds)
 {
-	const LivehimeVersion version = livehimeVersion();
+	const LivehimeVersion version = livehimeVersion(timeoutSeconds);
 	const QString csrf = credentials().biliJct;
 
 	// LiveHime signs stopLive without the CSRF fields and appends them afterwards.

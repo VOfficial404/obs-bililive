@@ -28,6 +28,8 @@ namespace bililive::danmaku {
 // u32 packet length | u16 header length | u16 version | u32 operation | u32 sequence
 inline constexpr int kHeaderSize = 16;
 inline constexpr quint32 kMaxPacketSize = 16 * 1024 * 1024;
+// Real batches inflate to a few KB; anything near this is an attack, not chat.
+inline constexpr qsizetype kMaxInflatedSize = 4 * 1024 * 1024;
 
 enum Operation : quint32 {
 	kOpHeartbeat = 2,
