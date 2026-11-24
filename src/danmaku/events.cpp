@@ -24,6 +24,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#include <limits>
+
 namespace bililive::danmaku {
 
 namespace {
@@ -113,16 +115,19 @@ std::optional<LiveEvent> parseGiftV2(const QJsonObject &data)
 	const auto gift = message ? message->message(10) : std::nullopt;
 	if (!gift)
 		return std::nullopt;
+	const quint64 count = gift->varint(3);
+	if (count > static_cast<quint64>(std::numeric_limits<qint64>::max()))
+		return std::nullopt;
 
 	LiveEvent event;
 	event.kind = Kind::Gift;
 	event.uid = static_cast<qint64>(message->varint(1));
 	event.user = message->string(2);
 	event.item = gift->string(2);
-	event.count = static_cast<qint64>(gift->varint(3));
+	event.count = static_cast<qint64>(count);
 	event.action = gift->string(18);
 	if (gift->string(8) == QLatin1String("gold"))
-		event.amountYuan = static_cast<double>(gift->varint(5) * gift->varint(3)) / kGoldPerYuan;
+		event.amountYuan = static_cast<double>(gift->varint(5)) * static_cast<double>(count) / kGoldPerYuan;
 	return event;
 }
 
@@ -145,7 +150,10 @@ std::optional<LiveEvent> parseGuard(const QJsonObject &data)
 	event.user = str(data, "username");
 	event.item = str(data, "gift_name");
 	event.count = toInt(data.value(QLatin1String("num")));
-	event.amountYuan = static_cast<double>(toInt(data.value(QLatin1String("price"))) * event.count) / kGoldPerYuan;
+	const qint64 price = toInt(data.value(QLatin1String("price")));
+	if (price < 0 || event.count < 0)
+		return std::nullopt;
+	event.amountYuan = static_cast<double>(price) * static_cast<double>(event.count) / kGoldPerYuan;
 	return event;
 }
 

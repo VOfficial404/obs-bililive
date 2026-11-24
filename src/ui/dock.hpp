@@ -80,7 +80,12 @@ private:
 	void pollQr();
 	void closeQrDialog();
 	void logout();
+	// Switches to a fresh BiliApi for these credentials: requests still running for the previous account keep
+	// their own instance and cookies.
+	void setAccount(const bili::Credentials &credentials);
 	void loadAccount();
+	// Re-enables what waits on a request that bumping session_ drops; see runForAccount().
+	void resetPending();
 	void createRoom();
 
 	void populateAreas();
@@ -127,6 +132,7 @@ private:
 	}
 
 	std::shared_ptr<bili::BiliApi> api_;
+	std::shared_ptr<bili::BiliApi> danmakuApi_; // fixed for danmaku_'s lifetime; its credentials follow api_
 	PluginSettings settings_;
 	danmaku::DanmakuClient *danmaku_;
 
@@ -136,6 +142,9 @@ private:
 	bool live_ = false;
 	bool busy_ = false;
 	bool stoppingStream_ = false; // our own stop; don't treat the STREAMING_STOPPED as a request
+	bool restartStream_ = false;  // start the stream again once our stop lands (new stream address)
+	bool pendingStop_ = false;    // OBS stopped streaming while busy_; end the broadcast once idle
+	bool startPending_ = false;   // startLive request in flight; the server may go live any moment
 	qint64 watched_ = -1;
 	qint64 online_ = -1;
 	qint64 likes_ = -1;
@@ -144,6 +153,7 @@ private:
 	QrPurpose qrPurpose_ = QrPurpose::None;
 	QPointer<QrDialog> qrDialog_;
 	QString qrKey_;
+	quint64 qrFlow_ = 0; // bumped per QR flow; results of an older flow are dropped
 	QTimer qrTimer_;
 
 	// Feed rows waiting for the next flush; the text views relayout once per batch instead of once per row.
@@ -156,6 +166,7 @@ private:
 
 	QStackedWidget *pages_ = nullptr;
 	QLabel *accountLabel_ = nullptr;
+	QLabel *loginStatus_ = nullptr;
 	QLabel *roomIdLabel_ = nullptr;
 	QWidget *roomIdRow_ = nullptr;
 	QWidget *noRoomPanel_ = nullptr;

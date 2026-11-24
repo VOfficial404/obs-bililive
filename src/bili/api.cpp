@@ -21,6 +21,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QRegularExpression>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -87,6 +88,14 @@ ApiResult parseEnvelope(const HttpResponse &response)
 
 } // namespace
 
+bool isDanmuHost(const QString &host)
+{
+	static const QRegularExpression kDnsName(
+		QStringLiteral(R"(\A(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9]+\z)"));
+	return host.size() <= 253 && host.endsWith(QLatin1String(".bilibili.com"), Qt::CaseInsensitive) &&
+	       kDnsName.match(host).hasMatch();
+}
+
 QByteArray Credentials::cookieHeader() const
 {
 	QByteArray cookie;
@@ -125,19 +134,24 @@ ApiResult BiliApi::perform(const HttpRequest &request) const
 
 HttpRequest BiliApi::webRequest(const QByteArray &url) const
 {
+	return webRequest(url, credentials());
+}
+
+HttpRequest BiliApi::webRequest(const QByteArray &url, const Credentials &session)
+{
 	HttpRequest request;
 	request.url = url;
-	request.cookie = credentials().cookieHeader();
+	request.cookie = session.cookieHeader();
 	request.userAgent = kWebUserAgent;
 	request.headers = {"Referer: https://live.bilibili.com/", "Origin: https://live.bilibili.com"};
 	return request;
 }
 
-HttpRequest BiliApi::livehimeRequest(const QByteArray &url, const LivehimeVersion &version) const
+HttpRequest BiliApi::livehimeRequest(const QByteArray &url, const LivehimeVersion &version, const Credentials &session)
 {
 	HttpRequest request;
 	request.url = url;
-	request.cookie = credentials().cookieHeader();
+	request.cookie = session.cookieHeader();
 	request.userAgent = QStringLiteral("LiveHime/%1 os/Windows pc_app/livehime build/%2 osVer/10.0_x86_64")
 				    .arg(version.version, version.build)
 				    .toUtf8();
@@ -182,16 +196,24 @@ BiliApi::LivehimeVersion BiliApi::livehimeVersion(long timeoutSeconds)
 	return livehime_;
 }
 
-QString BiliApi::wbiMixinKey()
+ApiResult BiliApi::wbiMixinKey(QString &key)
 {
 	{
 		std::lock_guard lock(mutex_);
-		if (!wbiKey_.isEmpty() && now() - wbiFetchedAt_ < kWbiKeyLifetimeSeconds)
-			return wbiKey_;
+		if (!wbiKey_.isEmpty() && now() - wbiFetchedAt_ < kWbiKeyLifetimeSeconds) {
+			key = wbiKey_;
+			return localFailure(0, {});
+		}
 	}
-	fetchUser();
+	const ApiResult nav = fetchUser().result;
+	if (!nav.ok() && nav.code != kNotLoggedIn)
+		return nav;
+
 	std::lock_guard lock(mutex_);
-	return wbiKey_;
+	if (wbiKey_.isEmpty() || now() - wbiFetchedAt_ >= kWbiKeyLifetimeSeconds)
+		return nav.ok() ? localFailure(kBadResponse, QStringLiteral("nav returned no WBI keys")) : nav;
+	key = wbiKey_;
+	return localFailure(0, {});
 }
 
 QrCode BiliApi::generateLoginQr()
@@ -210,11 +232,17 @@ QrPoll BiliApi::pollLoginQr(const QString &key)
 {
 	QrPoll poll;
 	// Called directly: the session arrives in Set-Cookie, which perform() drops.
-	const HttpResponse response = httpPerform(webRequest(
-		"https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=" + queryValue(key)));
+	HttpRequest request = webRequest("https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=" +
+					 queryValue(key));
+	request.redirects = RedirectPolicy::BilibiliLogin;
+	const HttpResponse response = httpPerform(request);
 	poll.result = parseEnvelope(response);
 	if (!poll.result.ok())
 		return poll;
+	if (response.status != 200) {
+		poll.result = localFailure(kBadResponse, QStringLiteral("HTTP %1").arg(response.status));
+		return poll;
+	}
 
 	const QJsonObject data = poll.result.object();
 	switch (data.value(QLatin1String("code")).toInt(-1)) {
@@ -256,9 +284,10 @@ QrPoll BiliApi::pollLoginQr(const QString &key)
 
 ApiResult BiliApi::logout()
 {
-	HttpRequest request = webRequest("https://passport.bilibili.com/login/exit/v2");
+	const Credentials session = credentials();
+	HttpRequest request = webRequest("https://passport.bilibili.com/login/exit/v2", session);
 	request.post = true;
-	request.body = encodeForm({{QStringLiteral("biliCSRF"), credentials().biliJct}});
+	request.body = encodeForm({{QStringLiteral("biliCSRF"), session.biliJct}});
 	return perform(request);
 }
 
@@ -272,7 +301,7 @@ UserInfo BiliApi::fetchUser()
 	const QJsonObject wbi = data.value(QLatin1String("wbi_img")).toObject();
 	const QString key = bili::wbiMixinKey(wbi.value(QLatin1String("img_url")).toString(),
 					      wbi.value(QLatin1String("sub_url")).toString());
-	if (!key.isEmpty()) {
+	if ((user.result.ok() || user.result.code == kNotLoggedIn) && !key.isEmpty()) {
 		std::lock_guard lock(mutex_);
 		wbiKey_ = key;
 		wbiFetchedAt_ = now();
@@ -286,17 +315,20 @@ UserInfo BiliApi::fetchUser()
 
 ApiResult BiliApi::ensureBuvid()
 {
-	if (!credentials().buvid3.isEmpty())
+	const Credentials session = credentials();
+	if (!session.buvid3.isEmpty())
 		return localFailure(0, QString());
 
-	const ApiResult result = perform(webRequest("https://api.bilibili.com/x/frontend/finger/spi"));
+	const ApiResult result = perform(webRequest("https://api.bilibili.com/x/frontend/finger/spi", session));
 	const QString buvid = result.object().value(QLatin1String("b_3")).toString();
 	if (!result.ok() || buvid.isEmpty())
 		return result.ok() ? localFailure(kBadResponse, QStringLiteral("finger/spi returned no buvid3"))
 				   : result;
 
 	std::lock_guard lock(mutex_);
-	credentials_.buvid3 = buvid;
+	if (credentials_.sessdata == session.sessdata && credentials_.uid == session.uid &&
+	    credentials_.buvid3.isEmpty())
+		credentials_.buvid3 = buvid;
 	return result;
 }
 
@@ -316,7 +348,6 @@ RoomInfo BiliApi::fetchRoomOfUser(qint64 uid)
 	const QJsonObject data = room.result.object();
 	room.title = data.value(QLatin1String("title")).toString();
 	room.areaId = static_cast<int>(jsonInt(data.value(QLatin1String("area_id"))));
-	room.parentAreaId = static_cast<int>(jsonInt(data.value(QLatin1String("parent_area_id"))));
 	room.liveStatus = static_cast<int>(jsonInt(data.value(QLatin1String("live_status"))));
 	room.coverUrl = data.value(QLatin1String("user_cover")).toString();
 	// A missing announcement is not worth failing the room load over.
@@ -347,8 +378,10 @@ AreaList BiliApi::fetchAreas()
 
 ApiResult BiliApi::createRoom()
 {
-	const QString csrf = credentials().biliJct;
-	HttpRequest request = webRequest("https://api.live.bilibili.com/xlive/app-blink/v1/preLive/CreateRoom");
+	const Credentials session = credentials();
+	const QString &csrf = session.biliJct;
+	HttpRequest request =
+		webRequest("https://api.live.bilibili.com/xlive/app-blink/v1/preLive/CreateRoom", session);
 	request.post = true;
 	request.body = encodeForm({{QStringLiteral("platform"), QStringLiteral("web")},
 				   {QStringLiteral("visit_id"), QString()},
@@ -359,8 +392,9 @@ ApiResult BiliApi::createRoom()
 
 ApiResult BiliApi::updateTitle(qint64 roomId, const QString &title)
 {
-	const QString csrf = credentials().biliJct;
-	HttpRequest request = webRequest("https://api.live.bilibili.com/room/v1/Room/update");
+	const Credentials session = credentials();
+	const QString &csrf = session.biliJct;
+	HttpRequest request = webRequest("https://api.live.bilibili.com/room/v1/Room/update", session);
 	request.post = true;
 	request.body = encodeForm({{QStringLiteral("room_id"), QString::number(roomId)},
 				   {QStringLiteral("title"), title},
@@ -371,8 +405,10 @@ ApiResult BiliApi::updateTitle(qint64 roomId, const QString &title)
 
 ApiResult BiliApi::updateRoomNews(qint64 roomId, qint64 uid, const QString &content)
 {
-	const QString csrf = credentials().biliJct;
-	HttpRequest request = webRequest("https://api.live.bilibili.com/xlive/app-blink/v1/index/updateRoomNews");
+	const Credentials session = credentials();
+	const QString &csrf = session.biliJct;
+	HttpRequest request =
+		webRequest("https://api.live.bilibili.com/xlive/app-blink/v1/index/updateRoomNews", session);
 	request.post = true;
 	request.body = encodeForm({{QStringLiteral("room_id"), QString::number(roomId)},
 				   {QStringLiteral("uid"), QString::number(uid)},
@@ -391,14 +427,17 @@ QByteArray BiliApi::downloadImage(const QString &url)
 	HttpRequest request;
 	request.url = parsed.toEncoded();
 	request.userAgent = kWebUserAgent;
+	request.redirects = RedirectPolicy::None;
 	const HttpResponse response = httpPerform(request);
 	return response.error.isEmpty() && response.status == 200 ? response.body : QByteArray();
 }
 
 ApiResult BiliApi::uploadCover(const QByteArray &image, const QByteArray &contentType)
 {
-	const QString csrf = credentials().biliJct;
-	HttpRequest upload = webRequest("https://api.bilibili.com/x/upload/web/image?csrf=" + queryValue(csrf));
+	const Credentials session = credentials();
+	const QString &csrf = session.biliJct;
+	HttpRequest upload =
+		webRequest("https://api.bilibili.com/x/upload/web/image?csrf=" + queryValue(csrf), session);
 	upload.multipart = {{"bucket", "live", {}, {}},
 			    {"dir", "new_room_cover", {}, {}},
 			    {"file", image, "cover", contentType}};
@@ -410,7 +449,8 @@ ApiResult BiliApi::uploadCover(const QByteArray &image, const QByteArray &conten
 	if (location.isEmpty())
 		return localFailure(kBadResponse, QStringLiteral("upload/web/image returned no location"));
 
-	HttpRequest update = webRequest("https://api.live.bilibili.com/xlive/app-blink/v1/preLive/UpdatePreLiveInfo");
+	HttpRequest update =
+		webRequest("https://api.live.bilibili.com/xlive/app-blink/v1/preLive/UpdatePreLiveInfo", session);
 	update.post = true;
 	update.body = encodeForm({{QStringLiteral("platform"), QStringLiteral("pc_link")},
 				  {QStringLiteral("mobi_app"), QStringLiteral("pc_link")},
@@ -426,8 +466,9 @@ ApiResult BiliApi::uploadCover(const QByteArray &image, const QByteArray &conten
 
 StartLiveResult BiliApi::startLive(qint64 roomId, int areaId)
 {
+	const Credentials session = credentials();
 	const LivehimeVersion version = livehimeVersion();
-	const QString csrf = credentials().biliJct;
+	const QString &csrf = session.biliJct;
 
 	Params params = livehimeBase(version);
 	params.emplace_back(QStringLiteral("area_v2"), QString::number(areaId));
@@ -436,7 +477,7 @@ StartLiveResult BiliApi::startLive(qint64 roomId, int areaId)
 	params.emplace_back(QStringLiteral("room_id"), QString::number(roomId));
 	params.emplace_back(QStringLiteral("type"), QStringLiteral("2"));
 
-	HttpRequest request = livehimeRequest("https://api.live.bilibili.com/room/v1/Room/startLive", version);
+	HttpRequest request = livehimeRequest("https://api.live.bilibili.com/room/v1/Room/startLive", version, session);
 	request.post = true;
 	request.body = encodeForm(appSign(std::move(params), kLivehimeAppKey, kLivehimeAppSecret));
 
@@ -460,8 +501,9 @@ StartLiveResult BiliApi::startLive(qint64 roomId, int areaId)
 
 ApiResult BiliApi::stopLive(qint64 roomId, long timeoutSeconds)
 {
+	const Credentials session = credentials();
 	const LivehimeVersion version = livehimeVersion(timeoutSeconds);
-	const QString csrf = credentials().biliJct;
+	const QString &csrf = session.biliJct;
 
 	// LiveHime signs stopLive without the CSRF fields and appends them afterwards.
 	Params params = livehimeBase(version);
@@ -470,7 +512,7 @@ ApiResult BiliApi::stopLive(qint64 roomId, long timeoutSeconds)
 	params.emplace_back(QStringLiteral("csrf"), csrf);
 	params.emplace_back(QStringLiteral("csrf_token"), csrf);
 
-	HttpRequest request = livehimeRequest("https://api.live.bilibili.com/room/v1/Room/stopLive", version);
+	HttpRequest request = livehimeRequest("https://api.live.bilibili.com/room/v1/Room/stopLive", version, session);
 	request.post = true;
 	request.body = encodeForm(sortedParams(std::move(params)));
 	request.timeoutSeconds = timeoutSeconds;
@@ -479,10 +521,11 @@ ApiResult BiliApi::stopLive(qint64 roomId, long timeoutSeconds)
 
 ApiResult BiliApi::faceAuthStatus(qint64 roomId)
 {
-	const QString csrf = credentials().biliJct;
+	const Credentials session = credentials();
+	const QString &csrf = session.biliJct;
 	HttpRequest request =
 		livehimeRequest("https://api.live.bilibili.com/xlive/app-blink/v1/preLive/IsUserIdentifiedByFaceAuth",
-				livehimeVersion());
+				livehimeVersion(), session);
 	request.post = true;
 	request.body = encodeForm({{QStringLiteral("room_id"), QString::number(roomId)},
 				   {QStringLiteral("face_auth_code"), QString::number(kFaceAuthRequired)},
@@ -494,8 +537,9 @@ ApiResult BiliApi::faceAuthStatus(qint64 roomId)
 
 ApiResult BiliApi::sendDanmaku(qint64 roomId, const QString &text)
 {
-	const QString csrf = credentials().biliJct;
-	HttpRequest request = webRequest("https://api.live.bilibili.com/msg/send");
+	const Credentials session = credentials();
+	const QString &csrf = session.biliJct;
+	HttpRequest request = webRequest("https://api.live.bilibili.com/msg/send", session);
 	request.post = true;
 	request.body = encodeForm({{QStringLiteral("bubble"), QStringLiteral("0")},
 				   {QStringLiteral("msg"), text},
@@ -518,11 +562,10 @@ ApiResult BiliApi::sendDanmaku(qint64 roomId, const QString &text)
 DanmuInfo BiliApi::fetchDanmuInfo(qint64 roomId)
 {
 	DanmuInfo info;
-	const QString mixinKey = wbiMixinKey();
-	if (mixinKey.isEmpty()) {
-		info.result = localFailure(kBadResponse, QStringLiteral("nav returned no WBI keys"));
+	QString mixinKey;
+	info.result = wbiMixinKey(mixinKey);
+	if (!info.result.ok())
 		return info;
-	}
 
 	const QByteArray query = wbiSign({{QStringLiteral("id"), QString::number(roomId)},
 					  {QStringLiteral("type"), QStringLiteral("0")},
@@ -537,7 +580,7 @@ DanmuInfo BiliApi::fetchDanmuInfo(qint64 roomId)
 		const QString name = host.value(QLatin1String("host")).toString();
 		const qint64 port = jsonInt(host.value(QLatin1String("wss_port")));
 		// The token and buvid go to this host; only accept Bilibili's own chat servers.
-		if (name.endsWith(QLatin1String(".bilibili.com")) && port > 0 && port <= 65535)
+		if (isDanmuHost(name) && port > 0 && port <= 65535)
 			info.hosts.append({name, static_cast<quint16>(port)});
 	}
 	if (info.hosts.isEmpty())

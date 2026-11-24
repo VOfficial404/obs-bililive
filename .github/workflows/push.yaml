@@ -1,22 +1,25 @@
 name: Push
 run-name: ${{ github.ref_name }} push run 🚀
 on:
-  # Builds run only for release tags; pull requests and manual dispatch cover the rest.
+  # Pushes to main only check formatting; builds run only for release tags, pull requests and manual dispatch cover the rest.
   push:
+    branches:
+      - main
     tags:
       - '*'
 permissions:
-  contents: write
+  contents: read
 jobs:
   check-format:
     name: Check Formatting 🔍
-    if: github.ref_name == 'master' || github.ref_name == 'main'
+    if: github.ref_type == 'branch'
     uses: ./.github/workflows/check-format.yaml
     permissions:
       contents: read
 
   build-project:
     name: Build Project 🧱
+    if: github.ref_type == 'tag'
     uses: ./.github/workflows/build-project.yaml
     secrets: inherit
     permissions:
@@ -27,6 +30,8 @@ jobs:
     if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     needs: build-project
+    permissions:
+      contents: write
     defaults:
       run:
         shell: bash
@@ -53,7 +58,7 @@ jobs:
           esac
 
       - name: Download Build Artifacts 📥
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         if: fromJSON(steps.check.outputs.validTag)
         id: download
 

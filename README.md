@@ -108,7 +108,7 @@ B 站并没有给所有主播开放 HEVC（H.265）推流。请在 OBS 的「设
 - 这是第三方工具，与哔哩哔哩无关。B 站随时可能修改接口，插件因此暂时失效时请到 [Issues](https://github.com/VOfficial404/obs-bililive/issues) 反馈。
 - 使用第三方工具开播可能违反 B 站的用户协议，由此产生的风险由使用者自行承担。
 - 登录凭据（`SESSDATA`、`bili_jct`）：Windows 上用系统的 DPAPI 加密后保存在 OBS 配置目录下的 `plugin_config/obs-bililive/config.json`，只有当前 Windows 用户能解密；macOS 上存在「钥匙串」里；Linux 上以明文保存在该文件中，文件只有你自己能读。不要把这个文件发给别人；不用了就在插件里点「退出登录」，凭据会被作废并清除。
-- 插件只和 B 站的服务器通信，不收集任何数据。
+- 除了 B 站的服务器，插件只在 OBS 启动时访问一次 GitHub 的 Releases 接口，检查有没有新版本（有的话在面板里提示），不收集任何数据。
 
 ## 从源码构建
 
@@ -159,4 +159,4 @@ Features: QR-code login, title and category, one-click go live / end broadcast (
 
 Install the package for your platform from [Releases](https://github.com/VOfficial404/obs-bililive/releases/latest), restart OBS and use the new **Bilibili Live** menu in the menu bar (between Tools and Help) → **Show panel**. Requires OBS Studio 31 or newer; the website, Steam and portable builds are all supported. On Windows (website and Steam builds) put the `obs-bililive` folder in `C:\ProgramData\obs-studio\plugins\`, not in the OBS or Steam install directory. Details for every build are in the [install guide](docs/INSTALL.md) (Chinese).
 
-This is an unofficial tool, not affiliated with Bilibili. Using it may breach Bilibili's terms of service; you use it at your own risk. The login session is encrypted with DPAPI on Windows and kept in the Keychain on macOS; on Linux it is stored in plain text in `plugin_config/obs-bililive/config.json` under the OBS configuration directory, readable only by your user.
+This is an unofficial tool, not affiliated with Bilibili. Using it may breach Bilibili's terms of service; you use it at your own risk. The login session is encrypted with DPAPI on Windows and kept in the Keychain on macOS; on Linux it is stored in plain text in `plugin_config/obs-bililive/config.json` under the OBS configuration directory, readable only by your user. Apart from Bilibili's servers, the plugin only contacts the GitHub Releases API once at startup to check for a newer version; it collects no data.

@@ -18,10 +18,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "danmaku/websocket.hpp"
 
+#include "bili/api.hpp"
 #include "danmaku/packet.hpp"
 
+#include <QByteArrayView>
 #include <QCryptographicHash>
-#include <QElapsedTimer>
+#include <QDeadlineTimer>
 #include <QList>
 #include <QRandomGenerator>
 #include <QtEndian>
@@ -29,6 +31,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <curl/curl.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <cstring>
 #include <mutex>
 
@@ -43,6 +46,7 @@ namespace {
 const QByteArray kGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 constexpr qsizetype kMaxHandshakeBytes = 16 * 1024;
 constexpr qint64 kHandshakeTimeoutMs = 10 * 1000;
+constexpr qint64 kWriteTimeoutMs = 10 * 1000;
 constexpr long kConnectTimeoutSeconds = 5;
 // How long the worker sleeps waiting for data before it looks at the send queue and the stop flag.
 constexpr int kPollMs = 200;
@@ -83,6 +87,18 @@ bool tlsBackendIsSchannel()
 	return info && info->ssl_version && strstr(info->ssl_version, "Schannel");
 }
 
+bool isValidClosePayload(const QByteArray &payload)
+{
+	if (payload.isEmpty())
+		return true;
+	if (payload.size() < 2)
+		return false;
+	const quint16 code = qFromBigEndian<quint16>(payload.constData());
+	const bool standard = code >= 1000 && code <= 1014 && (code < 1004 || code > 1006) && code != 1010;
+	const bool application = code >= 3000 && code <= 4999;
+	return (standard || application) && QByteArrayView(payload.constData() + 2, payload.size() - 2).isValidUtf8();
+}
+
 } // namespace
 
 /* Framing */
@@ -115,18 +131,41 @@ qsizetype wsCheckHandshake(const QByteArray &data, const QByteArray &key)
 {
 	const qsizetype end = data.indexOf("\r\n\r\n");
 	if (end < 0)
-		return data.size() > kMaxHandshakeBytes ? -1 : 0;
+		return data.size() >= kMaxHandshakeBytes ? -1 : 0;
+	if (end + 4 > kMaxHandshakeBytes)
+		return -1;
 
 	const QList<QByteArray> lines = data.left(end).split('\n');
-	if (!lines.first().startsWith("HTTP/1.1 101"))
+	const QByteArray &status = lines.first();
+	if (!status.endsWith('\r') || (status != "HTTP/1.1 101\r" && !status.startsWith("HTTP/1.1 101 ")))
 		return -1;
-	const QByteArray expected = wsAcceptKey(key);
-	for (const QByteArray &line : lines) {
+	bool upgrade = false;
+	bool connection = false;
+	bool accepted = false;
+	for (auto it = lines.cbegin() + 1; it != lines.cend(); ++it) {
+		const QByteArray &line = *it;
 		const qsizetype colon = line.indexOf(':');
-		if (colon > 0 && line.left(colon).trimmed().toLower() == "sec-websocket-accept")
-			return line.mid(colon + 1).trimmed() == expected ? end + 4 : -1;
+		if (colon <= 0 || line.front() == ' ' || line.front() == '\t' || line.at(colon - 1) == ' ' ||
+		    line.at(colon - 1) == '\t')
+			return -1;
+		const QByteArray name = line.left(colon).toLower();
+		const QByteArray value = line.mid(colon + 1).trimmed();
+		if (name == "upgrade") {
+			if (upgrade || value.compare("websocket", Qt::CaseInsensitive) != 0)
+				return -1;
+			upgrade = true;
+		} else if (name == "connection") {
+			for (const QByteArray &token : value.split(','))
+				connection |= token.trimmed().compare("upgrade", Qt::CaseInsensitive) == 0;
+		} else if (name == "sec-websocket-accept") {
+			if (accepted || value != wsAcceptKey(key))
+				return -1;
+			accepted = true;
+		} else if (name == "sec-websocket-extensions" || name == "sec-websocket-protocol") {
+			return -1;
+		}
 	}
-	return -1;
+	return upgrade && connection && accepted ? end + 4 : -1;
 }
 
 QByteArray wsFrame(quint8 opcode, const QByteArray &payload, quint32 mask)
@@ -178,60 +217,65 @@ bool WsFrameReader::feed(const QByteArray &data, std::vector<WsMessage> &out)
 			return fail();
 		const bool final = head[0] & 0x80;
 		const quint8 opcode = head[0] & 0x0F;
-		const bool masked = head[1] & 0x80;
+		if (head[1] & 0x80) // only clients mask frames
+			return fail();
 		quint64 length = head[1] & 0x7F;
+		if (opcode >= kWsClose && (!final || length > 125 || opcode > kWsPong))
+			return fail();
+		if (opcode > kWsBinary && opcode < kWsClose)
+			return fail();
+		if (opcode < kWsClose && (opcode == kWsContinuation) != (fragmentOpcode_ != 0))
+			return fail();
+		if (opcode == kWsClose && length == 1)
+			return fail();
 		qsizetype header = 2;
 		if (length == 126) {
 			if (available < 4)
 				break;
 			length = qFromBigEndian<quint16>(head + 2);
+			if (length < 126)
+				return fail();
 			header = 4;
 		} else if (length == 127) {
 			if (available < 10)
 				break;
 			length = qFromBigEndian<quint64>(head + 2);
+			if (length <= 0xFFFF)
+				return fail();
 			header = 10;
 		}
-		if (length > kMaxPacketSize)
+		if (length > kMaxPacketSize ||
+		    (opcode == kWsContinuation && length + static_cast<quint64>(fragments_.size()) > kMaxPacketSize))
 			return fail();
-		if (masked)
-			header += 4;
 		if (available < header + static_cast<qsizetype>(length))
 			break;
 
 		QByteArray payload = buffer_.mid(offset + header, static_cast<qsizetype>(length));
-		if (masked) {
-			const uchar *key = head + header - 4;
-			for (qsizetype i = 0; i < payload.size(); i++)
-				payload[i] = static_cast<char>(payload[i] ^ key[i % 4]);
-		}
+		if (opcode == kWsClose && !isValidClosePayload(payload))
+			return fail();
 		offset += header + static_cast<qsizetype>(length);
 
 		if (opcode >= kWsClose) {
-			if (!final || length > 125 || opcode > kWsPong)
-				return fail();
-			out.push_back({opcode, payload});
+			out.push_back({opcode, std::move(payload)});
+			if (opcode == kWsClose) {
+				// No further frames are processed after the closing handshake starts.
+				offset = buffer_.size();
+				break;
+			}
 		} else if (opcode == kWsContinuation) {
-			if (!fragmentOpcode_ ||
-			    fragments_.size() + payload.size() > static_cast<qsizetype>(kMaxPacketSize))
-				return fail();
 			fragments_ += payload;
 			if (final) {
-				out.push_back({fragmentOpcode_, fragments_});
+				out.push_back({fragmentOpcode_, std::move(fragments_)});
 				fragments_.clear();
 				fragmentOpcode_ = 0;
 			}
-		} else if (opcode == kWsText || opcode == kWsBinary) {
-			if (fragmentOpcode_)
-				return fail();
+		} else {
 			if (final) {
-				out.push_back({opcode, payload});
+				out.push_back({opcode, std::move(payload)});
 			} else {
 				fragmentOpcode_ = opcode;
-				fragments_ = payload;
+				fragments_ = std::move(payload);
 			}
-		} else {
-			return fail();
 		}
 	}
 	buffer_.remove(0, offset);
@@ -244,7 +288,10 @@ struct WssConnection::Worker {
 	std::atomic<bool> stop{false};
 	std::atomic<bool> finished{false};
 	std::mutex mutex;
+	std::condition_variable batchConsumed;
+	bool batchPending = false;
 	QList<QByteArray> outgoing; // encoded frames
+	QList<QByteArray> incoming;
 };
 
 WssConnection::WssConnection(QObject *parent) : QObject(parent) {}
@@ -259,6 +306,10 @@ WssConnection::~WssConnection()
 void WssConnection::open(const QString &host, quint16 port)
 {
 	close();
+	if (!bili::isDanmuHost(host)) {
+		post(generation_, [this]() { emit closed(QStringLiteral("invalid danmaku host")); });
+		return;
+	}
 	worker_ = std::make_shared<Worker>();
 	thread_ = std::thread(&WssConnection::run, this, worker_, host, port, generation_);
 }
@@ -267,7 +318,12 @@ void WssConnection::close()
 {
 	generation_++; // anything the old connection still posts is dropped
 	if (worker_) {
-		worker_->stop = true;
+		{
+			std::lock_guard lock(worker_->mutex);
+			worker_->stop = true;
+			worker_->incoming.clear();
+		}
+		worker_->batchConsumed.notify_one();
 		retired_.emplace_back(std::move(worker_), std::move(thread_));
 		worker_.reset();
 	}
@@ -354,31 +410,38 @@ void WssConnection::run(std::shared_ptr<Worker> worker, QString host, quint16 po
 		curl_easy_getinfo(curl, CURLINFO_ACTIVESOCKET, &socket);
 
 	const auto sendAll = [&](const QByteArray &data) {
+		const QDeadlineTimer deadline(kWriteTimeoutMs, Qt::PreciseTimer);
 		qsizetype offset = 0;
-		while (offset < data.size() && !worker->stop) {
+		while (offset < data.size() && !worker->stop && !deadline.hasExpired()) {
 			size_t sent = 0;
 			const CURLcode code = curl_easy_send(curl, data.constData() + offset,
 							     static_cast<size_t>(data.size() - offset), &sent);
-			if (code == CURLE_OK)
+			if (code == CURLE_OK && sent > 0) {
 				offset += static_cast<qsizetype>(sent);
-			else if (code != CURLE_AGAIN || waitSocket(socket, true, kPollMs) == Wait::Error)
+			} else if ((code != CURLE_AGAIN && code != CURLE_OK) ||
+				   waitSocket(socket, true,
+					      qMin(kPollMs, static_cast<int>(deadline.remainingTime()))) ==
+					   Wait::Error) {
 				return false;
+			}
 		}
 		return offset == data.size();
 	};
-	// Appends whatever is readable now; false when the connection is gone.
+	enum class Receive { Drained, Budget, Closed };
 	QByteArray chunk(kReadChunk, Qt::Uninitialized);
-	const auto receive = [&](QByteArray &into) {
-		for (;;) {
+	const auto receive = [&](QByteArray &into, qsizetype budget) {
+		while (budget > 0 && !worker->stop) {
 			size_t read = 0;
-			const CURLcode code =
-				curl_easy_recv(curl, chunk.data(), static_cast<size_t>(chunk.size()), &read);
+			const CURLcode code = curl_easy_recv(curl, chunk.data(), static_cast<size_t>(budget), &read);
 			if (code == CURLE_AGAIN)
-				return true;
+				return Receive::Drained;
 			if (code != CURLE_OK || read == 0)
-				return false;
-			into.append(chunk.constData(), static_cast<qsizetype>(read));
+				return Receive::Closed;
+			const auto size = static_cast<qsizetype>(read);
+			into.append(chunk.constData(), size);
+			budget -= size;
 		}
+		return worker->stop ? Receive::Closed : Receive::Budget;
 	};
 
 	[&]() {
@@ -393,22 +456,23 @@ void WssConnection::run(std::shared_ptr<Worker> worker, QString host, quint16 po
 			return;
 		}
 		QByteArray response;
-		QElapsedTimer clock;
-		clock.start();
+		const QDeadlineTimer deadline(kHandshakeTimeoutMs, Qt::PreciseTimer);
 		qsizetype header = 0;
 		while (!worker->stop) {
-			if (!receive(response)) {
-				fail(QStringLiteral("closed during handshake"));
-				return;
-			}
-			header = wsCheckHandshake(response, key);
-			if (header != 0)
-				break;
-			if (clock.elapsed() > kHandshakeTimeoutMs) {
+			if (deadline.hasExpired()) {
 				fail(QStringLiteral("handshake timeout"));
 				return;
 			}
-			waitSocket(socket, false, kPollMs);
+			const Receive result = receive(response, kMaxHandshakeBytes - response.size());
+			header = wsCheckHandshake(response, key);
+			if (header != 0)
+				break;
+			if (result == Receive::Closed ||
+			    waitSocket(socket, false, qMin(kPollMs, static_cast<int>(deadline.remainingTime()))) ==
+				    Wait::Error) {
+				fail(QStringLiteral("closed during handshake"));
+				return;
+			}
 		}
 		if (worker->stop)
 			return;
@@ -421,10 +485,15 @@ void WssConnection::run(std::shared_ptr<Worker> worker, QString host, quint16 po
 		WsFrameReader reader;
 		std::vector<WsMessage> messages;
 		QByteArray incoming = response.mid(header);
+		response.clear();
 		while (!worker->stop) {
 			QList<QByteArray> outgoing;
 			{
-				std::lock_guard lock(worker->mutex);
+				std::unique_lock lock(worker->mutex);
+				// Backpressure keeps at most one receive batch in the Qt queue.
+				worker->batchConsumed.wait(lock, [&] { return !worker->batchPending || worker->stop; });
+				if (worker->stop)
+					return;
 				outgoing.swap(worker->outgoing);
 			}
 			for (const QByteArray &frame : outgoing) {
@@ -434,38 +503,67 @@ void WssConnection::run(std::shared_ptr<Worker> worker, QString host, quint16 po
 				}
 			}
 
-			const bool open = receive(incoming);
+			const Receive result = receive(incoming, kReadChunk);
+			if (worker->stop)
+				return;
 			messages.clear();
 			if (!reader.feed(incoming, messages)) {
 				fail(QStringLiteral("WebSocket protocol error"));
 				return;
 			}
 			incoming.clear();
+			QList<QByteArray> batch;
+			QString closeReason;
 			for (WsMessage &message : messages) {
 				switch (message.opcode) {
 				case kWsBinary:
-					post(generation, [this, payload = std::move(message.payload)]() {
-						emit received(payload);
-					});
+					batch.append(std::move(message.payload));
 					break;
 				case kWsPing:
-					sendAll(wsFrame(kWsPong, message.payload,
-							QRandomGenerator::system()->generate()));
+					if (!sendAll(wsFrame(kWsPong, message.payload,
+							     QRandomGenerator::system()->generate())))
+						closeReason = QStringLiteral("pong send failed");
 					break;
 				case kWsClose:
-					sendAll(wsFrame(kWsClose, message.payload.left(2),
-							QRandomGenerator::system()->generate()));
-					fail(QStringLiteral("closed by server"));
-					return;
+					if (sendAll(wsFrame(kWsClose, message.payload.left(2),
+							    QRandomGenerator::system()->generate())))
+						closeReason = QStringLiteral("closed by server");
+					else
+						closeReason = QStringLiteral("close send failed");
+					break;
 				default:
 					break;
 				}
+				if (!closeReason.isEmpty())
+					break;
 			}
-			if (!open) {
-				fail(QStringLiteral("connection closed"));
+			if (!batch.isEmpty()) {
+				{
+					std::lock_guard lock(worker->mutex);
+					if (worker->stop)
+						return;
+					worker->incoming.swap(batch);
+					worker->batchPending = true;
+				}
+				post(generation, [this, worker]() {
+					QList<QByteArray> payloads;
+					{
+						std::lock_guard lock(worker->mutex);
+						payloads.swap(worker->incoming);
+					}
+					emit received(payloads);
+					{
+						std::lock_guard lock(worker->mutex);
+						worker->batchPending = false;
+					}
+					worker->batchConsumed.notify_one();
+				});
+			}
+			if (!closeReason.isEmpty() || result == Receive::Closed) {
+				fail(closeReason.isEmpty() ? QStringLiteral("connection closed") : closeReason);
 				return;
 			}
-			if (waitSocket(socket, false, kPollMs) == Wait::Error) {
+			if (result == Receive::Drained && waitSocket(socket, false, kPollMs) == Wait::Error) {
 				fail(QStringLiteral("socket error"));
 				return;
 			}

@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #pragma once
 
 #include <QByteArray>
+#include <QList>
 #include <QObject>
 #include <QString>
 
@@ -49,7 +50,7 @@ struct WsMessage {
 QByteArray wsAcceptKey(const QByteArray &key);
 QByteArray wsHandshakeRequest(const QString &host, quint16 port, const QByteArray &key);
 // Length of the complete, valid 101 response header (including the blank line); 0 while incomplete,
-// -1 when the server refused the upgrade or answered with the wrong accept key.
+// -1 for a malformed or rejected upgrade.
 qsizetype wsCheckHandshake(const QByteArray &data, const QByteArray &key);
 // One final frame, masked as RFC 6455 requires from clients.
 QByteArray wsFrame(quint8 opcode, const QByteArray &payload, quint32 mask);
@@ -84,7 +85,7 @@ public:
 
 signals:
 	void opened();
-	void received(const QByteArray &payload);
+	void received(const QList<QByteArray> &batch);
 	void closed(const QString &reason);
 
 private:

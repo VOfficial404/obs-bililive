@@ -262,10 +262,12 @@ QLabel *addStatTile(QHBoxLayout *row, QWidget *parent, const QString &caption)
 BiliDock::BiliDock(QWidget *parent)
 	: QWidget(parent),
 	  api_(std::make_shared<bili::BiliApi>()),
+	  danmakuApi_(std::make_shared<bili::BiliApi>()),
 	  settings_(loadSettings()),
-	  danmaku_(new danmaku::DanmakuClient(api_, this))
+	  danmaku_(new danmaku::DanmakuClient(danmakuApi_, this))
 {
 	api_->setCredentials(settings_.credentials);
+	danmakuApi_->setCredentials(settings_.credentials);
 
 	qrTimer_.setInterval(kQrPollMs);
 	feedTimer_.setSingleShot(true);
@@ -281,10 +283,15 @@ BiliDock::BiliDock(QWidget *parent)
 	checkForUpdate();
 	obs_frontend_add_event_callback(onFrontendEvent, this);
 
-	if (settings_.credentials.loggedIn())
+	if (settings_.credentials.loggedIn()) {
 		loadAccount();
-	else
+	} else {
 		pages_->setCurrentIndex(0);
+		if (settings_.sessionUnreadable) {
+			loginStatus_->setText(T("Login.Unreadable"));
+			loginStatus_->show();
+		}
+	}
 }
 
 BiliDock::~BiliDock()
@@ -317,9 +324,17 @@ void BiliDock::onStreamingStopped()
 {
 	if (stoppingStream_) {
 		stoppingStream_ = false;
+		if (restartStream_) {
+			restartStream_ = false;
+			obs_frontend_streaming_start();
+		}
 		return;
 	}
-	if (live_ && settings_.autoStopLive && !busy_)
+	if (!live_ || !settings_.autoStopLive)
+		return;
+	if (busy_)
+		pendingStop_ = true;
+	else
 		stopLive();
 }
 
@@ -328,8 +343,9 @@ void BiliDock::onExit()
 	danmaku_->stop();
 	overlay_->hide();
 	persist(); // picks up hotkeys changed in OBS's settings
-	// The event loop is going away, so end the broadcast synchronously.
-	if (live_ && settings_.autoStopLive && room_.roomId != 0) {
+	// The event loop is going away, so end the broadcast synchronously. A start still in flight may have gone
+	// live on the server already; ending a broadcast that never started is harmless.
+	if ((live_ || startPending_) && settings_.autoStopLive && room_.roomId != 0) {
 		const ApiResult result = api_->stopLive(room_.roomId, kExitStopTimeoutSeconds);
 		if (!result.ok())
 			obs_log(LOG_WARNING, "stopLive on exit failed: %d %s", result.code,
@@ -369,6 +385,12 @@ QWidget *BiliDock::buildLoginPage()
 	layout->addStretch();
 	layout->addWidget(hint);
 	layout->addWidget(button);
+	loginStatus_ = new QLabel(page);
+	loginStatus_->setObjectName(QStringLiteral("bililiveMuted"));
+	loginStatus_->setWordWrap(true);
+	loginStatus_->setAlignment(Qt::AlignCenter);
+	loginStatus_->hide();
+	layout->addWidget(loginStatus_);
 	layout->addStretch();
 	return page;
 }
@@ -823,9 +845,12 @@ void BiliDock::onOverlayHotkey(void *data, obs_hotkey_id id, obs_hotkey_t *, boo
 
 void BiliDock::beginLogin()
 {
+	const quint64 flow = ++qrFlow_;
 	const auto api = api_;
 	runner_.run([api]() { return api->generateLoginQr(); },
-		    [this](const bili::QrCode &qr) {
+		    [this, flow](const bili::QrCode &qr) {
+			    if (flow != qrFlow_)
+				    return;
 			    if (!qr.result.ok()) {
 				    appendError(qr.result);
 				    return;
@@ -846,6 +871,7 @@ void BiliDock::openQrDialog(QrPurpose purpose, const QString &title, const QStri
 		if (qrPurpose_ == QrPurpose::FaceAuth)
 			setBusy(false, T("Face.Cancelled"));
 		qrPurpose_ = QrPurpose::None;
+		qrFlow_++;
 		qrTimer_.stop();
 	});
 	qrDialog_->show();
@@ -855,6 +881,7 @@ void BiliDock::openQrDialog(QrPurpose purpose, const QString &title, const QStri
 void BiliDock::closeQrDialog()
 {
 	qrPurpose_ = QrPurpose::None;
+	qrFlow_++;
 	qrTimer_.stop();
 	if (qrDialog_) {
 		// The dialog is deleted later; its destroyed() must not tear down the flow that replaces it.
@@ -869,13 +896,14 @@ void BiliDock::pollQr()
 		return;
 	qrPollInFlight_ = true;
 	const auto api = api_;
+	const quint64 flow = qrFlow_;
 
 	if (qrPurpose_ == QrPurpose::Login) {
 		const QString key = qrKey_;
 		runner_.run([api, key]() { return api->pollLoginQr(key); },
-			    [this](const bili::QrPoll &poll) {
+			    [this, flow](const bili::QrPoll &poll) {
 				    qrPollInFlight_ = false;
-				    if (qrPurpose_ != QrPurpose::Login || !qrDialog_)
+				    if (flow != qrFlow_ || qrPurpose_ != QrPurpose::Login || !qrDialog_)
 					    return;
 				    switch (poll.state) {
 				    case bili::QrState::Waiting:
@@ -889,9 +917,10 @@ void BiliDock::pollQr()
 					    break;
 				    case bili::QrState::Success:
 					    closeQrDialog();
-					    settings_.credentials = poll.credentials;
-					    api_->setCredentials(poll.credentials);
+					    setAccount(poll.credentials);
+					    settings_.sessionUnreadable = false;
 					    persist();
+					    loginStatus_->hide();
 					    loadAccount();
 					    break;
 				    case bili::QrState::Failed:
@@ -906,9 +935,9 @@ void BiliDock::pollQr()
 
 	const qint64 roomId = room_.roomId;
 	runForAccount([api, roomId]() { return api->faceAuthStatus(roomId); },
-		      [this](const ApiResult &result) {
+		      [this, flow](const ApiResult &result) {
 			      qrPollInFlight_ = false;
-			      if (qrPurpose_ != QrPurpose::FaceAuth)
+			      if (flow != qrFlow_ || qrPurpose_ != QrPurpose::FaceAuth)
 				      return;
 			      if (result.object().value(QLatin1String("is_identified")).toBool()) {
 				      closeQrDialog();
@@ -923,22 +952,20 @@ void BiliDock::logout()
 {
 	closeQrDialog();
 	// Invalidate the session server-side with the old cookies.
-	auto previous = std::make_shared<bili::BiliApi>();
-	previous->setCredentials(settings_.credentials);
+	const auto previous = api_;
 	runner_.run([previous]() { return previous->logout(); }, [](const ApiResult &) {});
 
 	session_++; // results of requests made for this account are dropped from now on
+	resetPending();
 	danmaku_->stop();
-	settings_.credentials = {};
-	api_->setCredentials({});
+	setAccount({});
+	settings_.sessionUnreadable = false; // erases the stored session too, even one this system can't read
 	persist();
 	user_ = {};
 	room_ = {};
 	setBusy(false, QString());
 	setLive(false);
 	resetStats();
-	qrPollInFlight_ = false;        // a dropped face-auth poll would otherwise block polling for good
-	coverButton_->setEnabled(true); // likewise for a dropped cover upload
 	pendingAll_.clear();
 	pendingGifts_.clear();
 	pendingSuperChats_.clear();
@@ -949,6 +976,24 @@ void BiliDock::logout()
 	coverButton_->hide();
 	overlay_->clearLines();
 	pages_->setCurrentIndex(0);
+	loginStatus_->hide();
+}
+
+void BiliDock::setAccount(const bili::Credentials &credentials)
+{
+	settings_.credentials = credentials;
+	api_ = std::make_shared<bili::BiliApi>();
+	api_->setCredentials(credentials);
+	danmakuApi_->setCredentials(credentials);
+}
+
+void BiliDock::resetPending()
+{
+	qrPollInFlight_ = false;        // a dropped face-auth poll would otherwise block polling for good
+	coverButton_->setEnabled(true); // likewise for a dropped cover upload
+	sendButton_->setEnabled(true);  // and a dropped danmaku send
+	pendingStop_ = false;
+	startPending_ = false;
 }
 
 void BiliDock::loadAccount()
@@ -964,6 +1009,7 @@ void BiliDock::loadAccount()
 	};
 
 	session_++;
+	resetPending();
 	pages_->setCurrentIndex(1);
 	setBusy(true, T("Status.Loading"));
 	const auto api = api_;
@@ -995,6 +1041,7 @@ void BiliDock::loadAccount()
 			user_ = load.user;
 			accountLabel_->setText(user_.name);
 			settings_.credentials = api_->credentials(); // picks up buvid3
+			danmakuApi_->setCredentials(settings_.credentials);
 			persist();
 			if (!load.room.result.ok()) {
 				appendError(load.room.result);
@@ -1102,6 +1149,7 @@ void BiliDock::startLive()
 	const qint64 roomId = room_.roomId;
 	const auto api = api_;
 	setBusy(true, T("Live.Starting"));
+	startPending_ = true;
 	runForAccount(
 		[api, roomId, areaId, title, titleChanged]() {
 			StartLoad load;
@@ -1112,6 +1160,7 @@ void BiliDock::startLive()
 			return load;
 		},
 		[this, title, titleChanged](const StartLoad &load) {
+			startPending_ = false;
 			if (titleChanged) {
 				if (load.title.ok())
 					room_.title = title;
@@ -1140,8 +1189,14 @@ void BiliDock::startLive()
 			setLive(true);
 			setBusy(false, T("Live.Started"));
 			appendSystem(T("Live.Started"), kColorSystem);
-			if (settings_.autoStartStreaming && !obs_frontend_streaming_active())
+			if (obs_frontend_streaming_active()) {
+				// The running stream still goes to the previous address; restart it on the new one.
+				stoppingStream_ = true;
+				restartStream_ = true;
+				obs_frontend_streaming_stop();
+			} else if (settings_.autoStartStreaming) {
 				obs_frontend_streaming_start();
+			}
 		});
 }
 
@@ -1150,6 +1205,7 @@ void BiliDock::stopLive()
 	if (busy_ || room_.roomId == 0)
 		return;
 	setBusy(true, T("Live.Stopping"));
+	restartStream_ = false;
 	if (obs_frontend_streaming_active()) {
 		stoppingStream_ = true;
 		obs_frontend_streaming_stop();
@@ -1308,6 +1364,14 @@ void BiliDock::setBusy(bool busy, const QString &status)
 	liveAction_->setEnabled(liveButton_->isEnabled());
 	status_->setText(status);
 	status_->setVisible(!status.isEmpty());
+	if (busy || !pendingStop_)
+		return;
+	// OBS stopped streaming during the operation that just ended. Queued: the caller still finishes it first.
+	pendingStop_ = false;
+	QTimer::singleShot(0, this, [this]() {
+		if (live_ && settings_.autoStopLive && !obs_frontend_streaming_active())
+			stopLive();
+	});
 }
 
 void BiliDock::persist()
@@ -1362,6 +1426,8 @@ void BiliDock::onLiveEvent(const LiveEvent &event)
 		break;
 	}
 	case LiveEvent::Kind::Guard: {
+		if (!settings_.showGifts)
+			break;
 		QString line = T("Event.Guard").arg(event.item).arg(event.count);
 		if (event.amountYuan > 0)
 			line += T("Event.Value").arg(yuan(event.amountYuan));

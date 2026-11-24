@@ -36,6 +36,8 @@ bool readVarint(const QByteArray &data, qsizetype &offset, quint64 &value)
 		if (offset >= data.size())
 			return false;
 		const auto byte = static_cast<quint8>(data.at(offset++));
+		if (shift == 63 && byte > 1)
+			return false;
 		value |= static_cast<quint64>(byte & 0x7F) << shift;
 		if (!(byte & 0x80))
 			return true;
@@ -61,9 +63,10 @@ std::optional<ProtoMessage> parseProto(const QByteArray &data)
 		quint64 key = 0;
 		if (!readVarint(data, offset, key))
 			return std::nullopt;
-		const auto field = static_cast<quint32>(key >> 3);
-		if (field == 0)
+		const quint64 fieldNumber = key >> 3;
+		if (fieldNumber == 0 || fieldNumber > (quint64(1) << 29) - 1)
 			return std::nullopt;
+		const auto field = static_cast<quint32>(fieldNumber);
 
 		switch (static_cast<quint32>(key & 7)) {
 		case kVarint: {

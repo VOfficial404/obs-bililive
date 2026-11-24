@@ -24,14 +24,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 namespace bililive {
 
 struct LatestRelease {
-	QString version; // tag name; empty when the check failed
+	QString version; // release version ("1.2.3", a leading 'v' dropped); empty when the check failed or the tag isn't one
 	QUrl url;        // release page on github.com, built from the tag
 };
 
 // Blocking GitHub API call; call from worker threads only.
 LatestRelease fetchLatestRelease();
 
-// Dotted numeric versions; a pre-release suffix ("0.4.0-beta1") counts as older than the bare version.
+// candidate must be a plain "1.2.3" release (optionally "v1.2.3"); anything else is never newer. A pre-release
+// suffix on current ("0.4.0-beta1") counts as older than the bare version.
 bool isNewerVersion(const QString &candidate, const QString &current);
 
 } // namespace bililive

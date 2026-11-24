@@ -20,6 +20,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <curl/curl.h>
 
+#include <QElapsedTimer>
+
 #include <atomic>
 
 namespace bililive::bili {
@@ -51,9 +53,33 @@ int checkAborted(void *, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
 size_t collectHeader(char *data, size_t size, size_t count, void *userData)
 {
 	const size_t bytes = size * count;
-	parseSetCookieHeader(QByteArray(data, static_cast<qsizetype>(bytes)),
-			     *static_cast<QHash<QByteArray, QByteArray> *>(userData));
+	const QByteArray line = QByteArray::fromRawData(data, static_cast<qsizetype>(bytes));
+	auto &cookies = *static_cast<QHash<QByteArray, QByteArray> *>(userData);
+	if (line.startsWith("HTTP/"))
+		cookies.clear();
+	else
+		parseSetCookieHeader(line, cookies);
 	return bytes;
+}
+
+bool isBilibiliHttps(const char *url)
+{
+	CURLU *parsed = curl_url();
+	if (!parsed)
+		return false;
+
+	char *scheme = nullptr;
+	char *host = nullptr;
+	const bool valid = curl_url_set(parsed, CURLUPART_URL, url, CURLU_DISALLOW_USER) == CURLUE_OK &&
+			   curl_url_get(parsed, CURLUPART_SCHEME, &scheme, 0) == CURLUE_OK &&
+			   QLatin1String(scheme) == QLatin1String("https") &&
+			   curl_url_get(parsed, CURLUPART_HOST, &host, 0) == CURLUE_OK &&
+			   (QLatin1String(host).compare(QLatin1String("bilibili.com"), Qt::CaseInsensitive) == 0 ||
+			    QLatin1String(host).endsWith(QLatin1String(".bilibili.com"), Qt::CaseInsensitive));
+	curl_free(host);
+	curl_free(scheme);
+	curl_url_cleanup(parsed);
+	return valid;
 }
 
 } // namespace
@@ -75,6 +101,12 @@ void parseSetCookieHeader(const QByteArray &line, QHash<QByteArray, QByteArray> 
 HttpResponse httpPerform(const HttpRequest &request)
 {
 	HttpResponse response;
+	const bool login = request.redirects == RedirectPolicy::BilibiliLogin;
+	if (login && !isBilibiliHttps(request.url.constData())) {
+		response.error = QStringLiteral("Invalid Bilibili login URL");
+		return response;
+	}
+
 	CURL *curl = curl_easy_init();
 	if (!curl) {
 		response.error = QStringLiteral("curl_easy_init failed");
@@ -98,7 +130,9 @@ HttpResponse httpPerform(const HttpRequest &request)
 	curl_easy_setopt(curl, CURLOPT_PROTOCOLS, static_cast<long>(CURLPROTO_HTTPS));
 	curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS, static_cast<long>(CURLPROTO_HTTPS));
 #endif
-	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, request.cookie.isEmpty() ? 1L : 0L);
+	const bool followLogin = login && request.cookie.isEmpty();
+	curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION,
+			 request.redirects == RedirectPolicy::Https && request.cookie.isEmpty() ? 1L : 0L);
 	curl_easy_setopt(curl, CURLOPT_MAXREDIRS, kMaxRedirects);
 	curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
 	curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, kConnectTimeoutSeconds);
@@ -108,8 +142,11 @@ HttpResponse httpPerform(const HttpRequest &request)
 	curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, errorBuffer);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendBody);
 	curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
-	curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, collectHeader);
-	curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response.cookies);
+	if (login) {
+		curl_easy_setopt(curl, CURLOPT_SUPPRESS_CONNECT_HEADERS, 1L);
+		curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, collectHeader);
+		curl_easy_setopt(curl, CURLOPT_HEADERDATA, &response.cookies);
+	}
 #ifdef CURLSSLOPT_REVOKE_BEST_EFFORT
 	// Schannel fails hard when the revocation server is unreachable; OBS does the same.
 	curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, static_cast<long>(CURLSSLOPT_REVOKE_BEST_EFFORT));
@@ -137,11 +174,44 @@ HttpResponse httpPerform(const HttpRequest &request)
 		curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(request.body.size()));
 	}
 
-	const CURLcode code = curl_easy_perform(curl);
-	if (code == CURLE_OK)
+	QElapsedTimer elapsed;
+	const qint64 timeoutMs = followLogin ? static_cast<qint64>(request.timeoutSeconds) * 1000 : 0;
+	if (timeoutMs > 0)
+		elapsed.start();
+	for (long redirects = 0;; ++redirects) {
+		const CURLcode code = curl_easy_perform(curl);
+		if (code != CURLE_OK) {
+			response.error = QString::fromUtf8(errorBuffer[0] ? errorBuffer : curl_easy_strerror(code));
+			break;
+		}
 		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.status);
-	else
-		response.error = QString::fromUtf8(errorBuffer[0] ? errorBuffer : curl_easy_strerror(code));
+		if (!followLogin || response.status < 300 || response.status >= 400)
+			break;
+
+		// libcurl resolves relative redirects. Validate its target before sending the next request.
+		char *target = nullptr;
+		curl_easy_getinfo(curl, CURLINFO_REDIRECT_URL, &target);
+		if (!target)
+			break;
+		if (redirects >= kMaxRedirects || !isBilibiliHttps(target)) {
+			response.error = QStringLiteral("Invalid Bilibili login redirect");
+			break;
+		}
+		if (timeoutMs > 0) {
+			const qint64 remaining = timeoutMs - elapsed.elapsed();
+			if (remaining <= 0) {
+				response.error = QString::fromUtf8(curl_easy_strerror(CURLE_OPERATION_TIMEDOUT));
+				break;
+			}
+			curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, static_cast<long>(remaining));
+		}
+		curl_easy_setopt(curl, CURLOPT_URL, target);
+		response.body.clear();
+		response.cookies.clear();
+		response.status = 0;
+	}
+	if (login && (response.status != 200 || !response.error.isEmpty()))
+		response.cookies.clear();
 
 	curl_mime_free(mime);
 	curl_slist_free_all(headers);

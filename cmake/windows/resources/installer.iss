@@ -52,5 +52,9 @@ Source: "{#MySource}\*"; DestDir: "{app}"; Excludes: "*.pdb"; Flags: ignoreversi
 
 [Run]
 ; ProgramData lets every user create files in new folders, and OBS loads DLLs from this one for whoever starts it.
+; An earlier install or another user may own files here: hand everything to Administrators and reset child ACLs to
+; inherit-only, so the grant below reaches every file rather than just the folder.
+Filename: "{sys}\icacls.exe"; Parameters: """{app}"" /setowner *S-1-5-32-544 /T /C"; Flags: runhidden waituntilterminated
+Filename: "{sys}\icacls.exe"; Parameters: """{app}"" /reset /T /C"; Flags: runhidden waituntilterminated
 ; Drop the inherited ACL: only Administrators and SYSTEM can write, Users can only read and run.
 Filename: "{sys}\icacls.exe"; Parameters: """{app}"" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F /grant:r *S-1-5-18:(OI)(CI)F /grant:r *S-1-5-32-545:(OI)(CI)RX"; Flags: runhidden waituntilterminated

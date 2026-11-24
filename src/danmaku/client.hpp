@@ -24,6 +24,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "danmaku/packet.hpp"
 #include "danmaku/websocket.hpp"
 
+#include <QDeadlineTimer>
 #include <QObject>
 #include <QTimer>
 
@@ -44,7 +45,6 @@ public:
 
 	void start(qint64 roomId);
 	void stop();
-	State state() const { return state_; }
 
 signals:
 	void liveEvent(const bililive::danmaku::LiveEvent &event);
@@ -55,21 +55,23 @@ private:
 	void fetchInfo();
 	void connectToHost();
 	void onConnected();
-	void onReceived(const QByteArray &data);
+	void onReceived(const QList<QByteArray> &batch);
 	void onDisconnected(const QString &reason);
 	void retry(const QString &reason);
 	void setState(State state, const QString &detail = {});
 	void handlePacket(const Packet &packet);
+	void dispatchPacket(const Packet &packet);
 
 	std::shared_ptr<bili::BiliApi> api_;
 	WssConnection socket_;
 	QTimer heartbeat_;
-	QTimer stallTimer_; // restarted by every byte received; fires when the connection has gone quiet
+	QTimer stallTimer_; // covers initial authentication, then time since the last valid packet
 	QTimer retryTimer_;
+	QDeadlineTimer authDeadline_;
 	PacketReader reader_;
 	State state_ = State::Idle;
 	qint64 roomId_ = 0;
-	quint64 generation_ = 0; // bumps on start/stop so stale async results are dropped
+	quint64 generation_ = 0; // invalidates stale connection info and in-flight packet batches
 	int attempt_ = 0;
 	int hostIndex_ = 0;
 	bili::DanmuInfo info_;

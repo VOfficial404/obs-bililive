@@ -43,7 +43,6 @@ enum Version : quint16 {
 	kVersionJson = 0,
 	kVersionInt = 1,
 	kVersionZlib = 2,
-	kVersionBrotli = 3,
 };
 
 struct Packet {
@@ -54,7 +53,7 @@ struct Packet {
 
 QByteArray encodePacket(quint32 operation, const QByteArray &body, quint16 version = kVersionInt);
 
-// Splits a TCP byte stream into packets.
+// Splits the contents of binary WebSocket messages into live chat packets.
 class PacketReader {
 public:
 	// Appends complete packets to `out`; false when the stream is corrupt and must be dropped.

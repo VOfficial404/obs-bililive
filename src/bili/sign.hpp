@@ -28,8 +28,6 @@ namespace bililive::bili {
 
 using Params = std::vector<std::pair<QString, QString>>;
 
-QString md5Hex(const QByteArray &data);
-
 // Sorts by key; stable so repeated keys keep their order.
 Params sortedParams(Params params);
 

@@ -82,7 +82,7 @@ C:\ProgramData\obs-studio\plugins\
 1. 关闭 OBS。
 2. 双击 `obs-bililive-*-macos-universal.pkg`，按提示安装。插件会被装到 `~/Library/Application Support/obs-studio/plugins/obs-bililive.plugin`，只对当前用户生效。
 3. 如果系统提示「无法打开，因为它来自身份不明的开发者」：打开「系统设置 → 隐私与安全性」，在页面底部点「仍要打开」，再双击一次安装包。
-4. 启动 OBS，在菜单「停靠窗口」里勾选「B站直播」。
+4. 启动 OBS，在顶栏的 **B站直播 → 显示面板** 打开面板。
 
 ## Linux
 
@@ -112,7 +112,7 @@ Steam 上没有 Linux 版 OBS（[OBS 官方说明](https://obsproject.com/kb/ste
 - **放错了位置。** 便携版要放在 OBS 自己的文件夹里，不读 `ProgramData`。
 - **OBS 版本太旧。** 需要 31 或更新版本。
 - **进了安全模式。** 安全模式下不加载第三方插件，请正常重启 OBS。
-- **面板被关掉了。** 在「停靠窗口」菜单里重新勾选「B站直播」。
+- **面板被关掉了。** 在顶栏的 **B站直播 → 显示面板** 重新打开，或在「停靠窗口」菜单里重新勾选「B站直播」。
 
 还是不行的话，请在 [Issues](https://github.com/VOfficial404/obs-bililive/issues) 里附上 OBS 日志（「帮助 → 日志文件 → 上传当前日志文件」）。
 

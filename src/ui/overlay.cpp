@@ -299,12 +299,19 @@ void DanmakuOverlay::render()
 	}
 	lines_.erase(lines_.begin(), lines_.begin() + static_cast<std::ptrdiff_t>(first));
 
+	// The buffers are reused while the size and pixel ratio stay the same; render() runs up to every kRepaintMs.
 	const qreal ratio = devicePixelRatioF();
-	QImage text(size() * ratio, QImage::Format_ARGB32_Premultiplied);
-	text.setDevicePixelRatio(ratio);
-	text.fill(Qt::transparent);
+	const QSize pixels = size() * ratio;
+	const auto prepare = [&](QImage &image) {
+		if (image.size() != pixels || image.devicePixelRatio() != ratio) {
+			image = QImage(pixels, QImage::Format_ARGB32_Premultiplied);
+			image.setDevicePixelRatio(ratio);
+		}
+		image.fill(Qt::transparent);
+	};
+	prepare(textLayer_);
 	{
-		QPainter painter(&text);
+		QPainter painter(&textLayer_);
 		QAbstractTextDocumentLayout::PaintContext context;
 		context.palette.setColor(QPalette::Text, Qt::white);
 		painter.translate(kMargin, kMargin);
@@ -321,20 +328,19 @@ void DanmakuOverlay::render()
 		}
 	}
 
-	QImage outline = text;
+	prepare(outlineLayer_);
 	{
-		QPainter painter(&outline);
+		QPainter painter(&outlineLayer_);
+		painter.drawImage(0, 0, textLayer_);
 		painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
 		painter.fillRect(QRect(QPoint(0, 0), size()), QColor(0, 0, 0, 220));
 	}
-	text_ = QImage(text.size(), QImage::Format_ARGB32_Premultiplied);
-	text_.setDevicePixelRatio(ratio);
-	text_.fill(Qt::transparent);
+	prepare(text_);
 	{
 		QPainter painter(&text_);
 		for (const QPoint &offset : kOutline)
-			painter.drawImage(offset, outline);
-		painter.drawImage(0, 0, text);
+			painter.drawImage(offset, outlineLayer_);
+		painter.drawImage(0, 0, textLayer_);
 	}
 	update();
 

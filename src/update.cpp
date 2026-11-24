@@ -25,8 +25,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QRegularExpression>
 #include <QStringList>
 
-#include <utility>
-
 namespace bililive {
 
 LatestRelease fetchLatestRelease()
@@ -41,29 +39,33 @@ LatestRelease fetchLatestRelease()
 		return {};
 
 	// The link is built here rather than taken from html_url, so a tampered response can't make the
-	// update menu open some other URL or scheme.
+	// update menu open some other URL or scheme. Only plain release tags ("1.2.3" or "v1.2.3") count.
 	const QString tag = QJsonDocument::fromJson(response.body).object().value(QLatin1String("tag_name")).toString();
-	static const QRegularExpression kTag(QStringLiteral("^[0-9A-Za-z._-]{1,32}$"));
-	if (!kTag.match(tag).hasMatch())
+	static const QRegularExpression kTag(QStringLiteral(R"(\Av?([0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9})\z)"));
+	const QRegularExpressionMatch match = kTag.match(tag);
+	if (!match.hasMatch())
 		return {};
-	return {tag, QUrl(QStringLiteral("https://github.com/VOfficial404/obs-bililive/releases/tag/") + tag)};
+	return {match.captured(1),
+		QUrl(QStringLiteral("https://github.com/VOfficial404/obs-bililive/releases/tag/") + tag)};
 }
 
 bool isNewerVersion(const QString &candidate, const QString &current)
 {
-	const auto split = [](const QString &version) {
-		const QString core = version.section(QLatin1Char('-'), 0, 0);
-		return std::pair{core.split(QLatin1Char('.')), version.contains(QLatin1Char('-'))};
-	};
-	const auto [a, aPre] = split(candidate);
-	const auto [b, bPre] = split(current);
+	// The candidate is a release version: exactly three numbers. The running one may carry a pre-release
+	// suffix ("0.4.0-beta1"), which counts as older than the bare version.
+	static const QRegularExpression kRelease(QStringLiteral(R"(\Av?[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}\z)"));
+	if (!kRelease.match(candidate).hasMatch())
+		return false;
+	const QStringList a =
+		(candidate.startsWith(QLatin1Char('v')) ? candidate.mid(1) : candidate).split(QLatin1Char('.'));
+	const QStringList b = current.section(QLatin1Char('-'), 0, 0).split(QLatin1Char('.'));
 	for (qsizetype i = 0; i < qMax(a.size(), b.size()); i++) {
 		const int x = a.value(i).toInt();
 		const int y = b.value(i).toInt();
 		if (x != y)
 			return x > y;
 	}
-	return bPre && !aPre;
+	return current.contains(QLatin1Char('-'));
 }
 
 } // namespace bililive

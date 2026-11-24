@@ -17,7 +17,7 @@
 |---|---|
 | Windows | Visual Studio 2022、CMake 3.30 |
 | macOS | Xcode 16、CMake 3.30 |
-| Ubuntu 24.04 | CMake 3.28、`ninja-build`、`build-essential`、`qt6-base-dev`、`libcurl4-openssl-dev`、OBS PPA 的 `obs-studio` |
+| Ubuntu 24.04 | CMake 3.28、`ninja-build`、`build-essential`、`qt6-base-dev`、`libcurl4-openssl-dev`、`libsimde-dev`、OBS PPA 的 `obs-studio` |
 
 ```sh
 cmake --preset windows-x64      # 或 macos / ubuntu-x86_64
@@ -29,15 +29,18 @@ cmake --build --preset windows-x64
 ```
 src/
   bili/          B 站 HTTP 接口、签名（APP 签名、WBI）
-  danmaku/       弹幕协议：报文、zlib 解包、protobuf 读取、消息解析、TCP 连接
-  ui/            停靠窗口和二维码对话框
+  danmaku/       弹幕协议：报文、zlib 解包、protobuf 读取、消息解析、TLS WebSocket 连接
+  ui/            停靠窗口、二维码对话框和弹幕悬浮窗（overlay.*）
+  secret-store.*  登录凭据的加密保存（Windows DPAPI、macOS 钥匙串）
   settings.*     配置读写
   stream-control.*  把推流地址写进 OBS
+  update.*       启动时到 GitHub Releases 检查新版本
 tests/           协议层的单元测试（不依赖 OBS）
 deps/qrcodegen/  第三方二维码库
+deps/puff/       zlib 的参考解压实现，用来解包弹幕
 ```
 
-`bili/` 和 `danmaku/` 不依赖 libobs，组成静态库 `bililive-core`，单元测试只链接它。
+`bili/`、`danmaku/` 和 `update.*` 不依赖 libobs，组成静态库 `bililive-core`，单元测试只链接它。
 
 ## 测试
 

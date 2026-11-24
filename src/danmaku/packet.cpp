@@ -58,25 +58,51 @@ bool splitPackets(const QByteArray &data, std::vector<Packet> &out)
 	return true;
 }
 
+quint32 adler32(const QByteArray &data)
+{
+	constexpr quint32 modulus = 65521;
+	quint32 a = 1;
+	quint32 b = 0;
+	const auto *bytes = reinterpret_cast<const uchar *>(data.constData());
+	for (qsizetype remaining = data.size(); remaining > 0;) {
+		// At most 5552 bytes can be summed before reducing modulo 65521 without overflowing.
+		const qsizetype count = qMin(remaining, qsizetype(5552));
+		const auto *end = bytes + count;
+		for (; bytes != end; ++bytes) {
+			a += *bytes;
+			b += a;
+		}
+		a %= modulus;
+		b %= modulus;
+		remaining -= count;
+	}
+	return (b << 16) | a;
+}
+
 // A zlib stream (RFC 1950) inflated into at most `limit` bytes; empty when it is malformed or larger.
 // Decompression never allocates more than `limit`, so a crafted batch can't exhaust memory.
 QByteArray inflateBounded(const QByteArray &zlib, qsizetype limit)
 {
 	const auto *in = reinterpret_cast<const unsigned char *>(zlib.constData());
 	// 2-byte header: deflate method, window size, no preset dictionary.
-	if (zlib.size() < 2 || (in[0] & 0x0f) != 8 || (in[0] >> 4) > 7 || (in[1] & 0x20) ||
+	if (zlib.size() < 6 || (in[0] & 0x0f) != 8 || (in[0] >> 4) > 7 || (in[1] & 0x20) ||
 	    ((in[0] << 8) | in[1]) % 31 != 0)
 		return {};
+	const auto deflateLength = static_cast<unsigned long>(zlib.size() - 6);
 
 	// Start near the usual ratio and grow; each attempt is bounded by the buffer it gets.
 	qsizetype capacity = qMin(limit, zlib.size() * 8 + 1024);
 	for (;;) {
 		QByteArray out(capacity, Qt::Uninitialized);
 		unsigned long outLength = static_cast<unsigned long>(capacity);
-		unsigned long inLength = static_cast<unsigned long>(zlib.size() - 2);
+		unsigned long inLength = deflateLength;
 		const int status = puff(reinterpret_cast<unsigned char *>(out.data()), &outLength, in + 2, &inLength);
 		if (status == 0) {
+			if (inLength != deflateLength)
+				return {};
 			out.truncate(static_cast<qsizetype>(outLength));
+			if (adler32(out) != readU32(zlib.constData() + zlib.size() - 4))
+				return {};
 			return out;
 		}
 		if (status != 1 || capacity >= limit) // 1: output space exhausted

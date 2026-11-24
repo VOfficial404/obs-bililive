@@ -82,7 +82,6 @@ struct RoomInfo {
 	qint64 roomId = 0; // 0: the account has no live room yet
 	QString title;
 	int areaId = 0;
-	int parentAreaId = 0;
 	int liveStatus = 0; // 0 offline, 1 live, 2 replaying
 	QString coverUrl;   // empty when the room has no cover
 	QString news;       // room announcement (直播间公告)
@@ -121,6 +120,9 @@ struct DanmuInfo {
 	QString token;
 	QVector<DanmuHost> hosts;
 };
+
+// A DNS hostname below bilibili.com, suitable for the danmaku WebSocket URL.
+bool isDanmuHost(const QString &host);
 
 // Thread-safe; every request blocks, so call it from worker threads.
 class BiliApi {
@@ -162,10 +164,12 @@ private:
 
 	ApiResult perform(const HttpRequest &request) const;
 	HttpRequest webRequest(const QByteArray &url) const;
-	HttpRequest livehimeRequest(const QByteArray &url, const LivehimeVersion &version) const;
+	static HttpRequest webRequest(const QByteArray &url, const Credentials &session);
+	static HttpRequest livehimeRequest(const QByteArray &url, const LivehimeVersion &version,
+					   const Credentials &session);
 	Params livehimeBase(const LivehimeVersion &version) const;
 	LivehimeVersion livehimeVersion(long timeoutSeconds = 15);
-	QString wbiMixinKey();
+	ApiResult wbiMixinKey(QString &key);
 
 	mutable std::mutex mutex_;
 	Credentials credentials_;

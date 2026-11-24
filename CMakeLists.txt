@@ -47,7 +47,7 @@ target_sources(
 target_include_directories(bililive-core PUBLIC src)
 target_link_libraries(
   bililive-core
-  PUBLIC Qt6::Core CURL::libcurl qrcodegen puff $<$<PLATFORM_ID:Windows>:ws2_32>
+  PUBLIC Qt6::Core CURL::libcurl puff $<$<PLATFORM_ID:Windows>:ws2_32>
 )
 set_target_properties(bililive-core PROPERTIES AUTOMOC ON POSITION_INDEPENDENT_CODE ON)
 
@@ -57,7 +57,7 @@ find_package(libobs REQUIRED)
 find_package(obs-frontend-api REQUIRED)
 target_link_libraries(
   ${CMAKE_PROJECT_NAME}
-  PRIVATE OBS::libobs OBS::obs-frontend-api Qt6::Core Qt6::Widgets bililive-core
+  PRIVATE OBS::libobs OBS::obs-frontend-api Qt6::Core Qt6::Widgets bililive-core qrcodegen
 )
 # Session storage: DPAPI on Windows, Keychain on macOS (see src/secret-store.cpp).
 if(WIN32)
@@ -72,10 +72,7 @@ target_compile_options(
   ${CMAKE_PROJECT_NAME}
   PRIVATE $<$<C_COMPILER_ID:Clang,AppleClang>:-Wno-quoted-include-in-framework-header -Wno-comma>
 )
-set_target_properties(
-  ${CMAKE_PROJECT_NAME}
-  PROPERTIES AUTOMOC ON AUTOUIC ON AUTORCC ON
-)
+set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES AUTOMOC ON)
 
 target_sources(
   ${CMAKE_PROJECT_NAME}

@@ -18,6 +18,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "ui/qr-dialog.hpp"
 
+#include <obs-module.h>
 #include <qrcodegen/qrcodegen.hpp>
 
 #include <QImage>
@@ -73,7 +74,13 @@ QrDialog::QrDialog(const QString &title, const QString &hint, QWidget *parent)
 
 void QrDialog::setContent(const QString &text)
 {
-	image_->setPixmap(renderQr(text));
+	// The content comes from the server; too long for any QR version throws instead of returning.
+	try {
+		image_->setPixmap(renderQr(text));
+	} catch (const qrcodegen::data_too_long &) {
+		image_->clear();
+		setStatus(QString::fromUtf8(obs_module_text("Qr.TooLong")));
+	}
 }
 
 void QrDialog::setStatus(const QString &status)

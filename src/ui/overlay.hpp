@@ -51,7 +51,6 @@ public:
 	void setHint(const QString &text);
 
 	void setLocked(bool locked);
-	bool isLocked() const { return locked_; }
 	// Keeps the window out of display/window capture (Windows 10 2004+); false when the system refused.
 	bool setHiddenFromCapture(bool hidden);
 	static bool canHideFromCapture();
@@ -93,7 +92,9 @@ private:
 	std::deque<Line> lines_;
 	Line header_;
 	Line hint_;
-	QImage text_; // header, hint and lines with their outline, at device pixel ratio
+	QImage text_;         // header, hint and lines with their outline, at device pixel ratio
+	QImage textLayer_;    // render() scratch: the text alone
+	QImage outlineLayer_; // render() scratch: the text's shape in the outline colour
 	bool locked_ = false;
 	bool hiddenFromCapture_ = false;
 	int opacity_ = 40;

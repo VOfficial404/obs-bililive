@@ -24,6 +24,10 @@ namespace bililive {
 
 struct PluginSettings {
 	bili::Credentials credentials;
+	// A session is stored but can't be opened here (damaged, another user or machine, keychain unavailable).
+	// Saves with empty credentials keep it as is; a login replaces it, and a logout (credentials and this
+	// flag cleared) erases it.
+	bool sessionUnreadable = false;
 	bool autoStartStreaming = true; // start the OBS stream once startLive returns the address
 	bool autoStopLive = true;       // end the Bilibili broadcast when the OBS stream stops
 	bool showEnter = true;
@@ -40,8 +44,9 @@ struct PluginSettings {
 	QByteArray hotkeys;                   // JSON object: hotkey name -> obs_hotkey_save() array
 };
 
-// Stored as JSON in the plugin's config directory.
+// Stored as JSON in the plugin's config directory. Saving clears sessionUnreadable once a new session replaced
+// the stored one.
 PluginSettings loadSettings();
-void saveSettings(const PluginSettings &settings);
+void saveSettings(PluginSettings &settings);
 
 } // namespace bililive

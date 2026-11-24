@@ -32,6 +32,8 @@ struct HttpFormPart {
 	QByteArray contentType;
 };
 
+enum class RedirectPolicy { Https, None, BilibiliLogin };
+
 struct HttpRequest {
 	QByteArray url;
 	bool post = false;
@@ -41,12 +43,13 @@ struct HttpRequest {
 	QByteArray userAgent;
 	QList<QByteArray> headers;
 	long timeoutSeconds = 15;
+	RedirectPolicy redirects = RedirectPolicy::Https;
 };
 
 struct HttpResponse {
 	long status = 0;
 	QByteArray body;
-	QHash<QByteArray, QByteArray> cookies; // name -> value from Set-Cookie, value kept as sent
+	QHash<QByteArray, QByteArray> cookies; // Set-Cookie values from the final Bilibili login response
 	QString error;                         // transport failure; empty when a response arrived
 };
 

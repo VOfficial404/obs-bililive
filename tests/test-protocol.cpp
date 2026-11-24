@@ -16,10 +16,12 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
+#include "bili/api.hpp"
 #include "bili/http.hpp"
 #include "bili/sign.hpp"
 #include "danmaku/events.hpp"
 #include "danmaku/packet.hpp"
+#include "danmaku/protobuf.hpp"
 #include "danmaku/websocket.hpp"
 #include "update.hpp"
 
@@ -101,11 +103,35 @@ private slots:
 	{
 		QVERIFY(isNewerVersion(QStringLiteral("0.4.0"), QStringLiteral("0.3.1")));
 		QVERIFY(isNewerVersion(QStringLiteral("0.10.0"), QStringLiteral("0.9.9")));
-		QVERIFY(isNewerVersion(QStringLiteral("1.0"), QStringLiteral("0.99.99")));
+		QVERIFY(isNewerVersion(QStringLiteral("v1.0.0"), QStringLiteral("0.8.0")));
+		QVERIFY(isNewerVersion(QStringLiteral("0.8.0"), QStringLiteral("0.8.0-beta1")));
+		// Release tags are strictly three numeric parts; anything else never prompts an update.
+		for (const char *tag : {"1.0", "0.9.test", "1.0.0.1", "1.0.0-beta", "v", ""})
+			QVERIFY2(!isNewerVersion(QString::fromLatin1(tag), QStringLiteral("0.8.0")), tag);
+		QVERIFY(!isNewerVersion(QStringLiteral("１.0.0"), QStringLiteral("0.8.0")));
 		QVERIFY(!isNewerVersion(QStringLiteral("0.3.1"), QStringLiteral("0.3.1")));
 		QVERIFY(!isNewerVersion(QStringLiteral("0.3.0"), QStringLiteral("0.3.1")));
 		QVERIFY(!isNewerVersion(QStringLiteral("0.4.0-beta1"), QStringLiteral("0.4.0")));
 		QVERIFY(isNewerVersion(QStringLiteral("0.4.0"), QStringLiteral("0.4.0-beta1")));
+	}
+
+	// The token and buvid are sent to this host, so the check must reject anything a URL parser
+	// would resolve to another domain.
+	void danmuHostsAreBilibiliDnsNames()
+	{
+		for (const char *host : {"broadcastlv.chat.bilibili.com", "a-1.chat.bilibili.com", "X.BILIBILI.COM"})
+			QVERIFY2(bili::isDanmuHost(QString::fromLatin1(host)), host);
+		for (const char *host :
+		     {"bilibili.com", ".bilibili.com", "a..bilibili.com", "-a.bilibili.com", "a-.bilibili.com",
+		      "evil.com/.bilibili.com", "evil.com?.bilibili.com", "evil.com#.bilibili.com",
+		      "evil.com:443/x.bilibili.com", "user@evil.com/.bilibili.com", "a b.bilibili.com",
+		      "a_b.bilibili.com", "evilbilibili.com"})
+			QVERIFY2(!bili::isDanmuHost(QString::fromLatin1(host)), host);
+		QVERIFY(!bili::isDanmuHost(QString(64, QLatin1Char('a')) + QStringLiteral(".bilibili.com")));
+		QString longName;
+		while (longName.size() < 250)
+			longName += QStringLiteral("abcdefghi.");
+		QVERIFY(!bili::isDanmuHost(longName + QStringLiteral("bilibili.com")));
 	}
 
 	// Vectors from bilibili-API-collect docs/misc/sign/wbi.md.
@@ -181,36 +207,82 @@ private slots:
 		QVERIFY(!danmaku::expandPacket(batch, out));
 	}
 
+	void zlibRejectsInvalidTrailer()
+	{
+		const QByteArray inner = danmaku::encodePacket(danmaku::kOpMessage, R"({"cmd":"LIVE"})");
+		const QByteArray zlib = qCompress(inner).mid(4);
+		danmaku::Packet batch{danmaku::kVersionZlib, danmaku::kOpMessage, zlib};
+		std::vector<danmaku::Packet> out;
+		batch.body[batch.body.size() - 1] = static_cast<char>(batch.body.back() ^ 1);
+		QVERIFY(!danmaku::expandPacket(batch, out));
+		batch.body = zlib;
+		batch.body.insert(zlib.size() - 4, '\0'); // extra byte after DEFLATE, with the original checksum
+		QVERIFY(!danmaku::expandPacket(batch, out));
+		QVERIFY(out.empty());
+	}
+
 	// Vector from RFC 6455 section 1.3.
 	void wsAcceptKeyMatchesRfc()
 	{
 		QCOMPARE(danmaku::wsAcceptKey("dGhlIHNhbXBsZSBub25jZQ=="), QByteArray("s3pPLMBiTxaQ9kYGzzhZRbK+xOo="));
 	}
 
-	void wsHandshakeChecksAcceptKey()
+	void wsHandshakeChecksResponse()
 	{
 		const QByteArray key = "dGhlIHNhbXBsZSBub25jZQ==";
 		const QByteArray ok =
-			"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+			"HTTP/1.1 101 Switching Protocols\r\nUpgrade: WebSocket\r\nConnection: keep-alive, UpGrAdE\r\n"
 			"sec-websocket-accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
-		QCOMPARE(danmaku::wsCheckHandshake(ok + "\x82\x00", key), ok.size());
+		QCOMPARE(danmaku::wsCheckHandshake(ok + QByteArray::fromHex("8200"), key), ok.size());
 		QCOMPARE(danmaku::wsCheckHandshake(ok.left(20), key), qsizetype(0));
 		QByteArray wrongAccept = ok;
 		wrongAccept.replace("s3pPL", "AAAAA");
 		QCOMPARE(danmaku::wsCheckHandshake(wrongAccept, key), qsizetype(-1));
 		QCOMPARE(danmaku::wsCheckHandshake("HTTP/1.1 403 Forbidden\r\n\r\n", key), qsizetype(-1));
+		QByteArray wrongCode = ok;
+		wrongCode.replace(" 101 ", " 1010 ");
+		QCOMPARE(danmaku::wsCheckHandshake(wrongCode, key), qsizetype(-1));
+		QByteArray wrongUpgrade = ok;
+		wrongUpgrade.replace("Upgrade: WebSocket", "Upgrade: other");
+		QCOMPARE(danmaku::wsCheckHandshake(wrongUpgrade, key), qsizetype(-1));
+		QByteArray wrongConnection = ok;
+		wrongConnection.replace("UpGrAdE", "not-upgrade");
+		QCOMPARE(danmaku::wsCheckHandshake(wrongConnection, key), qsizetype(-1));
+		QCOMPARE(danmaku::wsCheckHandshake(
+				 ok.chopped(2) + "Sec-WebSocket-Extensions: permessage-deflate\r\n\r\n", key),
+			 qsizetype(-1));
+		QCOMPARE(danmaku::wsCheckHandshake(ok.chopped(2) + "Sec-WebSocket-Protocol: chat\r\n\r\n", key),
+			 qsizetype(-1));
+
+		constexpr qsizetype maxHeaderBytes = 16 * 1024;
+		const QByteArray padded =
+			ok.chopped(2) + "X-Extra: " + QByteArray(maxHeaderBytes - ok.size() - 11, 'x');
+		QCOMPARE(danmaku::wsCheckHandshake(padded + "\r\n\r\n" + QByteArray(50, 'y'), key), maxHeaderBytes);
+		QCOMPARE(danmaku::wsCheckHandshake(padded + "x\r\n\r\n", key), qsizetype(-1));
 	}
 
-	// Client frames are masked; the reader unmasks, so a round trip must return the payload unchanged.
-	void wsFramesRoundTrip()
+	void wsMasksClientFrames()
+	{
+		// Masked "Hello" from RFC 6455 section 5.7.
+		QCOMPARE(danmaku::wsFrame(danmaku::kWsText, "Hello", 0x37fa213d),
+			 QByteArray::fromHex("818537fa213d7f9f4d5158"));
+		const QByteArray medium = danmaku::wsFrame(danmaku::kWsBinary, QByteArray(300, 'm'), 0xdeadbeef);
+		QCOMPARE(medium.left(8), QByteArray::fromHex("82fe012cdeadbeef"));
+		QCOMPARE(medium.size(), qsizetype(308));
+		QVERIFY(!medium.contains(QByteArray(8, 'm')));
+		const QByteArray large = danmaku::wsFrame(danmaku::kWsBinary, QByteArray(70000, 'L'), 0x01020304);
+		QCOMPARE(large.left(14), QByteArray::fromHex("82ff000000000001117001020304"));
+		QCOMPARE(large.size(), qsizetype(70014));
+		QVERIFY(!large.contains(QByteArray(8, 'L')));
+	}
+
+	void wsReadsServerFrames()
 	{
 		const QByteArray small = danmaku::encodePacket(danmaku::kOpHeartbeat, {});
 		const QByteArray medium(300, 'm');
 		const QByteArray large(70000, 'L');
-		const QByteArray stream = danmaku::wsFrame(danmaku::kWsBinary, small, 0x12345678) +
-					  danmaku::wsFrame(danmaku::kWsBinary, medium, 0xdeadbeef) +
-					  danmaku::wsFrame(danmaku::kWsBinary, large, 0x01020304);
-		QVERIFY(!stream.contains(medium.left(8))); // the payload is masked on the wire
+		const QByteArray stream = QByteArray::fromHex("8210") + small + QByteArray::fromHex("827e012c") +
+					  medium + QByteArray::fromHex("827f0000000000011170") + large;
 
 		danmaku::WsFrameReader reader;
 		std::vector<danmaku::WsMessage> out;
@@ -221,6 +293,22 @@ private slots:
 		QCOMPARE(out[0].payload, small);
 		QCOMPARE(out[1].payload, medium);
 		QCOMPARE(out[2].payload, large);
+	}
+
+	void wsRejectsMaskedServerFrames()
+	{
+		const QByteArray masked = danmaku::wsFrame(danmaku::kWsBinary, "hello", 0x12345678);
+		std::vector<danmaku::WsMessage> out;
+		QVERIFY(!danmaku::WsFrameReader().feed(masked.left(2), out));
+		QVERIFY(out.empty());
+	}
+
+	void wsRejectsNonMinimalLengths()
+	{
+		std::vector<danmaku::WsMessage> out;
+		QVERIFY(!danmaku::WsFrameReader().feed(QByteArray::fromHex("827e007d"), out));
+		QVERIFY(!danmaku::WsFrameReader().feed(QByteArray::fromHex("827f000000000000ffff"), out));
+		QVERIFY(out.empty());
 	}
 
 	// Server frames arrive unmasked; a ping may sit between the fragments of a message.
@@ -256,7 +344,21 @@ private slots:
 		QVERIFY(!danmaku::WsFrameReader().feed(QByteArray("\x80\x00", 2), out));
 		// Fragmented control frame.
 		QVERIFY(!danmaku::WsFrameReader().feed(QByteArray("\x09\x00", 2), out));
+		// An oversized control frame is refused from the first two bytes.
+		QVERIFY(!danmaku::WsFrameReader().feed(QByteArray::fromHex("897e"), out));
 		QVERIFY(out.empty());
+	}
+
+	void wsValidatesClosePayload()
+	{
+		std::vector<danmaku::WsMessage> out;
+		QVERIFY(!danmaku::WsFrameReader().feed(QByteArray::fromHex("8801ff"), out));
+		QVERIFY(!danmaku::WsFrameReader().feed(QByteArray::fromHex("880203ed"), out));   // reserved 1005
+		QVERIFY(!danmaku::WsFrameReader().feed(QByteArray::fromHex("880303e8c2"), out)); // invalid UTF-8
+		QVERIFY(out.empty());
+		QVERIFY(danmaku::WsFrameReader().feed(QByteArray::fromHex("880203e8"), out)); // normal closure 1000
+		QVERIFY(danmaku::WsFrameReader().feed(QByteArray::fromHex("8800"), out));
+		QCOMPARE(out.size(), size_t(2));
 	}
 
 	// A batch that inflates past the cap is refused instead of being decompressed into memory.
@@ -340,6 +442,20 @@ private slots:
 	{
 		const QByteArray pb = protoBytes(2, "name").left(3);
 		QVERIFY(!danmaku::parseCommand(command("INTERACT_WORD_V2", pb)));
+	}
+
+	void rejectsOverflowingProtobufVarintsAndFieldNumbers()
+	{
+		const QByteArray prefix = varint(1 << 3) + QByteArray(9, '\xff');
+		QVERIFY(!danmaku::parseProto(prefix + '\x02'));
+		const auto maxVarint = danmaku::parseProto(prefix + '\x01');
+		QVERIFY(maxVarint);
+		QCOMPARE(maxVarint->varint(1), ~quint64(0));
+
+		QVERIFY(!danmaku::parseProto(protoInt(0, 1)));
+		QVERIFY(!danmaku::parseProto(protoInt(1 << 29, 1)));
+		QVERIFY(!danmaku::parseProto(varint((quint64(1) << 35) | 8) + '\x01'));
+		QVERIFY(danmaku::parseProto(protoInt((1 << 29) - 1, 1)));
 	}
 
 	void parsesSuperChatAndCounters()

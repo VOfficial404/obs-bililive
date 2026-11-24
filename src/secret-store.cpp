@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <dpapi.h>
 #elif defined(__APPLE__)
 #include <Security/Security.h>
+#include <util/base.h>
 #endif
 
 namespace bililive {
@@ -88,21 +89,35 @@ CFMutableDictionaryRef itemQuery()
 void erase()
 {
 	CFMutableDictionaryRef query = itemQuery();
-	SecItemDelete(query);
+	const OSStatus status = SecItemDelete(query);
 	CFRelease(query);
+	if (status != errSecSuccess && status != errSecItemNotFound)
+		blog(LOG_WARNING, "[obs-bililive] could not remove the session from the Keychain (OSStatus %d)",
+		     static_cast<int>(status));
 }
 
+// Updated in place: deleting first would lose the stored session whenever the add then fails.
 QByteArray seal(const QByteArray &secret)
 {
-	erase();
-	CFMutableDictionaryRef item = itemQuery();
 	CFDataRef value = CFDataCreate(kCFAllocatorDefault, reinterpret_cast<const UInt8 *>(secret.constData()),
 				       static_cast<CFIndex>(secret.size()));
-	CFDictionarySetValue(item, kSecValueData, value);
-	CFDictionarySetValue(item, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly);
-	const OSStatus status = SecItemAdd(item, nullptr);
+	CFMutableDictionaryRef query = itemQuery();
+	CFMutableDictionaryRef changes = CFDictionaryCreateMutable(
+		kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+	CFDictionarySetValue(changes, kSecValueData, value);
+	CFDictionarySetValue(changes, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly);
+	OSStatus status = SecItemUpdate(query, changes);
+	if (status == errSecItemNotFound) {
+		CFDictionarySetValue(query, kSecValueData, value);
+		CFDictionarySetValue(query, kSecAttrAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly);
+		status = SecItemAdd(query, nullptr);
+	}
+	CFRelease(changes);
+	CFRelease(query);
 	CFRelease(value);
-	CFRelease(item);
+	if (status != errSecSuccess)
+		blog(LOG_WARNING, "[obs-bililive] could not store the session in the Keychain (OSStatus %d)",
+		     static_cast<int>(status));
 	return status == errSecSuccess ? kMarker : QByteArray();
 }
 

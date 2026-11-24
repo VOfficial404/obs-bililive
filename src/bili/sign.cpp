@@ -45,12 +45,12 @@ QString urlStem(const QString &url)
 	return name.section(QLatin1Char('.'), 0, 0);
 }
 
-} // namespace
-
 QString md5Hex(const QByteArray &data)
 {
 	return QString::fromLatin1(QCryptographicHash::hash(data, QCryptographicHash::Md5).toHex());
 }
+
+} // namespace
 
 Params sortedParams(Params params)
 {
