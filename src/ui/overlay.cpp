@@ -256,7 +256,7 @@ void DanmakuOverlay::scheduleRender()
 	// A zero timeout fires once the current event batch is handled, so a burst of lines costs one render and a
 	// lone line shows up immediately; only back-to-back bursts wait out the rest of the frame.
 	const qint64 sinceLast = clock_.elapsed() - lastRenderMs_;
-	repaintTimer_.start(static_cast<int>(qBound<qint64>(0, kRepaintMs - sinceLast, kRepaintMs)));
+	repaintTimer_.start(static_cast<int>(qBound(qint64(0), kRepaintMs - sinceLast, qint64(kRepaintMs))));
 }
 
 QTextDocument *DanmakuOverlay::layOut(Line &line, qreal width)

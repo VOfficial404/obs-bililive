@@ -1613,7 +1613,7 @@ void BiliDock::appendLine(const QString &html, FeedKind kind, const QString &ove
 		// Zero fires once the current batch of events is handled: a lone row shows at once, a burst in one
 		// relayout. Only rows right after a flush wait out the rest of kFeedFlushMs.
 		const qint64 since = feedClock_.isValid() ? feedClock_.elapsed() : kFeedFlushMs;
-		feedTimer_.start(static_cast<int>(qBound<qint64>(0, kFeedFlushMs - since, kFeedFlushMs)));
+		feedTimer_.start(static_cast<int>(qBound(qint64(0), kFeedFlushMs - since, qint64(kFeedFlushMs))));
 	}
 	overlay_->appendLine(overlayHtml.isEmpty() ? html : overlayHtml);
 }
