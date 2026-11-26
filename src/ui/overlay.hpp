@@ -36,8 +36,10 @@ namespace bililive {
 // Unlocked it can be dragged and resized; locked it lets every click through to the window below.
 // Keep it parentless: an owned window disappears when OBS is minimized.
 //
-// The text is laid out with one QTextDocument per line and drawn into a cached image, redrawn at most every
-// kRepaintMs: no widget per line, and nothing at all is laid out while the window is hidden.
+// Styled like a game's chat box: one line per message on its own translucent strip, newest at the bottom.
+// The text is laid out with one QTextDocument per line and drawn into a cached image. A new line is drawn as soon as
+// the event batch that brought it is handled, then at most every kRepaintMs: no widget per line, and nothing at all
+// is laid out while the window is hidden.
 class DanmakuOverlay : public QWidget {
 	Q_OBJECT
 
@@ -87,6 +89,7 @@ private:
 	QTimer repaintTimer_;
 	QTimer fadeTimer_; // wakes render() when the oldest line starts or keeps fading
 	QElapsedTimer clock_;
+	qint64 lastRenderMs_ = 0; // on clock_
 	qint64 fadeMs_ = 0;
 	QFont font_;
 	std::deque<Line> lines_;

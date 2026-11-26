@@ -37,6 +37,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QFormLayout>
 #include <QFrame>
 #include <QGuiApplication>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QImage>
@@ -67,7 +68,10 @@ using danmaku::LiveEvent;
 
 constexpr int kQrPollMs = 1500;
 constexpr int kFeedMaxLines = 1000;
+// The first row after a quiet spell is shown right away; rows in a burst are batched at most this often.
 constexpr int kFeedFlushMs = 100;
+// How long a danmaku sent from the dock waits for its copy from the server before that copy counts as new.
+constexpr qint64 kLocalEchoMs = 15000;
 constexpr QSize kCoverSize(112, 63);
 constexpr int kCoverMaxWidth = 1920; // keeps uploads small; Bilibili shows covers far below this
 constexpr int kAlreadyHasRoom = 1531193016;
@@ -215,6 +219,50 @@ QString card(const char *background, const QString &html)
 	return QStringLiteral("<table width=\"100%\" cellpadding=\"6\" cellspacing=\"0\" "
 			      "style=\"background-color:%1\"><tr><td>%2</td></tr></table>")
 		.arg(QLatin1String(background), html);
+}
+
+/* Overlay rows, styled like a game's chat box: "(tags) Name: message" */
+
+constexpr const char *kChatText = "#ffffff";
+constexpr const char *kChatMuted = "#c8c8c8";
+
+// Every viewer keeps one name colour, like teammates in a game; the streamer is always pink.
+const char *chatNameColor(const LiveEvent &event, qint64 anchorUid)
+{
+	static constexpr const char *kPalette[] = {"#f5d442", "#4fc3f7", "#5fe08a", "#ff9f43", "#c792ff"};
+	if (anchorUid != 0 && event.uid == anchorUid)
+		return "#fb7299";
+	const quint64 key = event.uid != 0 ? static_cast<quint64>(event.uid) : static_cast<quint64>(qHash(event.user));
+	return kPalette[key % (sizeof(kPalette) / sizeof(kPalette[0]))];
+}
+
+// "(房管) (舰长) " in front of the name, the way a game prefixes a team or *DEAD*.
+QString chatTags(const LiveEvent &event, qint64 anchorUid)
+{
+	QStringList tags;
+	if (anchorUid != 0 && event.uid == anchorUid)
+		tags << T("Badge.Anchor");
+	if (event.isAdmin)
+		tags << T("Badge.Admin");
+	if (event.guardLevel >= 1 && event.guardLevel <= 3) {
+		static constexpr const char *kGuards[] = {"Badge.Guard1", "Badge.Guard2", "Badge.Guard3"};
+		tags << T(kGuards[event.guardLevel - 1]);
+	}
+	QString html;
+	for (const QString &tag : tags)
+		html += span(kChatMuted, QStringLiteral("(%1) ").arg(tag));
+	return html;
+}
+
+QString chatName(const LiveEvent &event, qint64 anchorUid)
+{
+	return span(chatNameColor(event, anchorUid), event.user);
+}
+
+QString chatMessage(const LiveEvent &event, qint64 anchorUid, const QString &text)
+{
+	return chatTags(event, anchorUid) + span(chatNameColor(event, anchorUid), event.user + QStringLiteral(": ")) +
+	       span(kChatText, text);
 }
 
 // Re-applies the style sheet after a dynamic property used in a selector changed.
@@ -969,6 +1017,7 @@ void BiliDock::logout()
 	pendingAll_.clear();
 	pendingGifts_.clear();
 	pendingSuperChats_.clear();
+	localEchoes_.clear();
 	feedAll_->clear();
 	feedGifts_->clear();
 	feedSuperChats_->clear();
@@ -1329,13 +1378,38 @@ void BiliDock::sendDanmaku()
 	sendButton_->setEnabled(false);
 	const qint64 roomId = room_.roomId;
 	const auto api = api_;
+
+	// Show it right away, as a chat box does, instead of after the request and the server's round trip; the copy
+	// the server pushes back a moment later is skipped.
+	LiveEvent self;
+	self.kind = LiveEvent::Kind::Danmaku;
+	self.uid = user_.uid;
+	self.user = user_.name;
+	self.text = text;
+	if (!echoClock_.isValid())
+		echoClock_.start();
+	if (self.uid != 0)
+		localEchoes_.append({text, echoClock_.elapsed()});
+	appendLine(identityBadges(self, user_.uid) + span("#fb7299", self.user) +
+			   span(kColorUser, QStringLiteral("：")) + text.toHtmlEscaped(),
+		   FeedKind::Plain, chatMessage(self, user_.uid, text));
+	sendEdit_->clear();
+
 	runForAccount([api, roomId, text]() { return api->sendDanmaku(roomId, text); },
-		      [this](const ApiResult &result) {
+		      [this, text](const ApiResult &result) {
 			      sendButton_->setEnabled(true);
 			      if (result.ok())
-				      sendEdit_->clear();
-			      else
-				      appendError(result);
+				      return;
+			      // Not sent: nothing will echo it back, and the text is handed back for another try.
+			      for (qsizetype i = localEchoes_.size() - 1; i >= 0; --i) {
+				      if (localEchoes_[i].text == text) {
+					      localEchoes_.removeAt(i);
+					      break;
+				      }
+			      }
+			      if (sendEdit_->text().isEmpty())
+				      sendEdit_->setText(text);
+			      appendError(result);
 		      });
 }
 
@@ -1397,8 +1471,11 @@ void BiliDock::onLiveEvent(const LiveEvent &event)
 		const QString medal = event.medal.isEmpty() ? QString() : medalBadge(event);
 		const bool anchor = user_.uid != 0 && event.uid == user_.uid;
 		const char *nameColor = anchor ? "#fb7299" : event.guardLevel ? "#7ec8ff" : kColorUser;
+		if (anchor && takeLocalEcho(event))
+			break; // already shown when it was sent
 		appendLine(medal + identityBadges(event, user_.uid) + span(nameColor, event.user) +
-			   span(kColorUser, QStringLiteral("：")) + event.text.toHtmlEscaped());
+				   span(kColorUser, QStringLiteral("：")) + event.text.toHtmlEscaped(),
+			   FeedKind::Plain, chatMessage(event, user_.uid, event.text));
 		break;
 	}
 	case LiveEvent::Kind::Gift: {
@@ -1409,9 +1486,15 @@ void BiliDock::onLiveEvent(const LiveEvent &event)
 			       QStringLiteral(" <b style=\"color:%1\">%2</b> ×%3")
 				       .arg(QLatin1String(kColorGift), event.item.toHtmlEscaped())
 				       .arg(event.count);
-		if (event.amountYuan > 0)
+		QString chat = chatName(event, user_.uid) + QLatin1Char(' ') +
+			       span(kChatMuted, event.action.isEmpty() ? T("Event.GiftAction") : event.action) +
+			       QLatin1Char(' ') +
+			       span(kColorGift, QStringLiteral("%1 ×%2").arg(event.item).arg(event.count));
+		if (event.amountYuan > 0) {
 			line += span(kColorGift, T("Event.Value").arg(yuan(event.amountYuan)));
-		appendLine(line, FeedKind::Gift);
+			chat += span(kColorGift, T("Event.Value").arg(yuan(event.amountYuan)));
+		}
+		appendLine(line, FeedKind::Gift, chat);
 		break;
 	}
 	case LiveEvent::Kind::SuperChat: {
@@ -1422,7 +1505,10 @@ void BiliDock::onLiveEvent(const LiveEvent &event)
 				     event.user.toHtmlEscaped());
 		const QString body =
 			QStringLiteral("<br><span style=\"color:#ffffff\">%1</span>").arg(event.text.toHtmlEscaped());
-		appendLine(card(superChatColor(event.amountYuan), head + body), FeedKind::SuperChat);
+		appendLine(card(superChatColor(event.amountYuan), head + body), FeedKind::SuperChat,
+			   span(kColorGift,
+				QStringLiteral("[%1] ").arg(T("Event.SuperChat").arg(yuan(event.amountYuan)))) +
+				   chatMessage(event, user_.uid, event.text));
 		break;
 	}
 	case LiveEvent::Kind::Guard: {
@@ -1433,7 +1519,7 @@ void BiliDock::onLiveEvent(const LiveEvent &event)
 			line += T("Event.Value").arg(yuan(event.amountYuan));
 		appendLine(card(kColorGuardCard,
 				span(kColorUser, event.user) + QLatin1Char(' ') + span("#e2cfff", line)),
-			   FeedKind::Gift);
+			   FeedKind::Gift, chatName(event, user_.uid) + QLatin1Char(' ') + span("#e2cfff", line));
 		break;
 	}
 	case LiveEvent::Kind::Enter:
@@ -1496,7 +1582,21 @@ void BiliDock::onDanmakuState(danmaku::DanmakuClient::State state, const QString
 	}
 }
 
-void BiliDock::appendLine(const QString &html, FeedKind kind)
+bool BiliDock::takeLocalEcho(const LiveEvent &event)
+{
+	const qint64 now = echoClock_.isValid() ? echoClock_.elapsed() : 0;
+	localEchoes_.removeIf([now](const LocalEcho &echo) { return now - echo.sentMs > kLocalEchoMs; });
+	const QString text = event.text.trimmed();
+	for (qsizetype i = 0; i < localEchoes_.size(); ++i) {
+		if (localEchoes_[i].text == text) {
+			localEchoes_.removeAt(i);
+			return true;
+		}
+	}
+	return false;
+}
+
+void BiliDock::appendLine(const QString &html, FeedKind kind, const QString &overlayHtml)
 {
 	// Cards (Super Chats, guards) are tables, which always start a new block; a time stamp in front of one would
 	// sit alone on its own line.
@@ -1509,13 +1609,18 @@ void BiliDock::appendLine(const QString &html, FeedKind kind)
 		pendingGifts_.append(row);
 	if (kind == FeedKind::SuperChat)
 		pendingSuperChats_.append(row);
-	if (!feedTimer_.isActive())
-		feedTimer_.start();
-	overlay_->appendLine(html);
+	if (!feedTimer_.isActive()) {
+		// Zero fires once the current batch of events is handled: a lone row shows at once, a burst in one
+		// relayout. Only rows right after a flush wait out the rest of kFeedFlushMs.
+		const qint64 since = feedClock_.isValid() ? feedClock_.elapsed() : kFeedFlushMs;
+		feedTimer_.start(static_cast<int>(qBound<qint64>(0, kFeedFlushMs - since, kFeedFlushMs)));
+	}
+	overlay_->appendLine(overlayHtml.isEmpty() ? html : overlayHtml);
 }
 
 void BiliDock::flushFeeds()
 {
+	feedClock_.start();
 	const auto flush = [](QTextBrowser *feed, QStringList &rows) {
 		if (rows.isEmpty())
 			return;

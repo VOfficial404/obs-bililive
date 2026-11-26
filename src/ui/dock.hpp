@@ -26,6 +26,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-frontend-api.h>
 #include <obs-hotkey.h>
 
+#include <QElapsedTimer>
+#include <QList>
 #include <QPointer>
 #include <QTimer>
 #include <QWidget>
@@ -112,8 +114,11 @@ private:
 	void onDanmakuState(danmaku::DanmakuClient::State state, const QString &detail);
 	// Feed rows: every row goes to the "all" tab and the overlay; gift rows also to the gift tab, Super
 	// Chats to both other tabs.
+	// overlayHtml is the overlay's game-chat-style version of the row; empty shows the row itself.
 	enum class FeedKind { Plain, Gift, SuperChat };
-	void appendLine(const QString &html, FeedKind kind = FeedKind::Plain);
+	void appendLine(const QString &html, FeedKind kind = FeedKind::Plain, const QString &overlayHtml = QString());
+	// True (and forgotten) when this danmaku is the server's copy of one already shown when it was sent.
+	bool takeLocalEcho(const danmaku::LiveEvent &event);
 	void flushFeeds();
 	void appendSystem(const QString &text, const char *color = nullptr);
 	void appendError(const bili::ApiResult &result);
@@ -161,6 +166,14 @@ private:
 	QStringList pendingGifts_;
 	QStringList pendingSuperChats_;
 	QTimer feedTimer_;
+	QElapsedTimer feedClock_; // since the last flush
+	// Danmaku sent from the dock, shown at once; the server's copy of each is skipped when it arrives.
+	struct LocalEcho {
+		QString text;
+		qint64 sentMs = 0; // on echoClock_
+	};
+	QList<LocalEcho> localEchoes_;
+	QElapsedTimer echoClock_;
 	bool qrPollInFlight_ = false;
 	quint64 session_ = 0; // bumped by logout() and loadAccount(), see runForAccount()
 

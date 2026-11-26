@@ -44,13 +44,20 @@ namespace {
 
 constexpr size_t kMaxLines = 100;
 constexpr int kMargin = 10;
-constexpr int kSpacing = 2;
+constexpr int kSpacing = 3;
 constexpr int kRadius = 8;
-// Chat at 10 fps reads the same as at 60 and costs a fraction of it in busy rooms.
-constexpr int kRepaintMs = 100;
+// Each chat line sits on its own translucent strip, as in a game's chat box.
+constexpr qreal kBandPadX = 6;
+constexpr qreal kBandPadY = 2;
+constexpr qreal kBandRadius = 3;
+// New lines are drawn as soon as the event batch that brought them is handled; this only caps how often a
+// busy room redraws (~30 fps).
+constexpr int kRepaintMs = 33;
+// A fade reads smooth enough at 10 fps and would otherwise redraw nonstop in a steady chat.
+constexpr int kFadeStepMs = 100;
 constexpr qint64 kFadeOutMs = 1000;
 // Fully transparent pixels of a layered window don't receive the mouse; keep the unlocked window grabbable.
-constexpr int kMinUnlockedOpacity = 15;
+constexpr int kUnlockedOpacity = 25;
 constexpr QSize kDefaultSize(360, 420);
 // One-pixel dark outline: keeps the text readable on bright game scenes with a fully transparent background.
 constexpr QPoint kOutline[] = {{1, 1}, {-1, 0}, {1, 0}, {0, -1}, {0, 1}};
@@ -82,6 +89,7 @@ DanmakuOverlay::DanmakuOverlay(QWidget *parent)
 	fadeTimer_.setSingleShot(true);
 	connect(&fadeTimer_, &QTimer::timeout, this, &DanmakuOverlay::render);
 	clock_.start();
+	lastRenderMs_ = -kRepaintMs;
 
 	setFontPixelSize(16);
 	resize(kDefaultSize);
@@ -161,7 +169,7 @@ bool DanmakuOverlay::setHiddenFromCapture(bool hidden)
 void DanmakuOverlay::setBackgroundOpacity(int percent)
 {
 	opacity_ = qBound(0, percent, 100);
-	update();
+	scheduleRender();
 }
 
 void DanmakuOverlay::setFontPixelSize(int pixels)
@@ -173,17 +181,15 @@ void DanmakuOverlay::setFontPixelSize(int pixels)
 void DanmakuOverlay::paintEvent(QPaintEvent *)
 {
 	QPainter painter(this);
-	painter.setRenderHint(QPainter::Antialiasing);
-	const int opacity = locked_ ? opacity_ : qMax(opacity_, kMinUnlockedOpacity);
-	painter.setBrush(QColor(0, 0, 0, opacity * 255 / 100));
-	if (locked_) {
-		painter.setPen(Qt::NoPen);
-	} else {
+	// Locked, the window itself is invisible: only the per-line strips and the text show over the game.
+	if (!locked_) {
+		painter.setRenderHint(QPainter::Antialiasing);
+		painter.setBrush(QColor(0, 0, 0, kUnlockedOpacity * 255 / 100));
 		QPen pen(QColor(255, 255, 255, 140));
 		pen.setStyle(Qt::DashLine);
 		painter.setPen(pen);
+		painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), kRadius, kRadius);
 	}
-	painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), kRadius, kRadius);
 	painter.drawImage(0, 0, text_);
 }
 
@@ -245,8 +251,12 @@ bool DanmakuOverlay::applyCaptureAffinity()
 void DanmakuOverlay::scheduleRender()
 {
 	// Hidden: keep only the strings; showEvent renders them.
-	if (isVisible() && !repaintTimer_.isActive())
-		repaintTimer_.start();
+	if (!isVisible() || repaintTimer_.isActive())
+		return;
+	// A zero timeout fires once the current event batch is handled, so a burst of lines costs one render and a
+	// lone line shows up immediately; only back-to-back bursts wait out the rest of the frame.
+	const qint64 sinceLast = clock_.elapsed() - lastRenderMs_;
+	repaintTimer_.start(static_cast<int>(qBound<qint64>(0, kRepaintMs - sinceLast, kRepaintMs)));
 }
 
 QTextDocument *DanmakuOverlay::layOut(Line &line, qreal width)
@@ -272,12 +282,14 @@ void DanmakuOverlay::render()
 		return;
 
 	const qint64 now = clock_.elapsed();
+	lastRenderMs_ = now;
 	if (fadeMs_ > 0) {
 		while (!lines_.empty() && now - lines_.front().arrivedMs >= fadeMs_ + kFadeOutMs)
 			lines_.pop_front();
 	}
 
 	const qreal width = qMax(1, this->width() - 2 * kMargin);
+	const qreal lineWidth = qMax<qreal>(1, width - 2 * kBandPadX);
 	const qreal height = this->height() - 2 * kMargin;
 	std::vector<QTextDocument *> top;
 	qreal used = 0;
@@ -291,7 +303,8 @@ void DanmakuOverlay::render()
 	// Keep the newest lines that fit; older ones scroll off the top for good.
 	size_t first = lines_.size();
 	while (first > 0) {
-		const qreal lineHeight = layOut(lines_[first - 1], width)->size().height() + kSpacing;
+		const qreal lineHeight =
+			layOut(lines_[first - 1], lineWidth)->size().height() + 2 * kBandPadY + kSpacing;
 		if (used + lineHeight > height && first < lines_.size())
 			break;
 		used += lineHeight;
@@ -309,22 +322,41 @@ void DanmakuOverlay::render()
 		}
 		image.fill(Qt::transparent);
 	};
+	// Strip behind each line, as wide as its text: short messages get short strips, like a game's chat box.
+	struct Band {
+		QRectF rect;
+		qreal opacity;
+	};
+	std::vector<Band> bands;
+	bands.reserve(lines_.size());
+
 	prepare(textLayer_);
 	{
 		QPainter painter(&textLayer_);
 		QAbstractTextDocumentLayout::PaintContext context;
 		context.palette.setColor(QPalette::Text, Qt::white);
-		painter.translate(kMargin, kMargin);
-		const auto draw = [&](QTextDocument *document) {
+		qreal y = kMargin;
+		for (QTextDocument *document : top) {
+			painter.save();
+			painter.translate(kMargin, y);
 			document->documentLayout()->draw(&painter, context);
-			painter.translate(0, document->size().height() + kSpacing);
-		};
-		for (QTextDocument *document : top)
-			draw(document);
+			painter.restore();
+			y += document->size().height() + kSpacing;
+		}
 		for (Line &line : lines_) {
 			const qint64 fading = fadeMs_ > 0 ? now - line.arrivedMs - fadeMs_ : 0;
-			painter.setOpacity(fading > 0 ? 1.0 - qreal(fading) / kFadeOutMs : 1.0);
-			draw(line.document.get());
+			const qreal opacity = fading > 0 ? qMax<qreal>(0, 1.0 - qreal(fading) / kFadeOutMs) : 1.0;
+			QTextDocument *document = line.document.get();
+			const qreal textHeight = document->size().height();
+			const qreal textWidth = qMin(document->idealWidth(), lineWidth);
+			bands.push_back(
+				{QRectF(kMargin, y, textWidth + 2 * kBandPadX, textHeight + 2 * kBandPadY), opacity});
+			painter.save();
+			painter.setOpacity(opacity);
+			painter.translate(kMargin + kBandPadX, y + kBandPadY);
+			document->documentLayout()->draw(&painter, context);
+			painter.restore();
+			y += textHeight + 2 * kBandPadY + kSpacing;
 		}
 	}
 
@@ -338,6 +370,17 @@ void DanmakuOverlay::render()
 	prepare(text_);
 	{
 		QPainter painter(&text_);
+		if (opacity_ > 0) {
+			painter.setRenderHint(QPainter::Antialiasing);
+			painter.setPen(Qt::NoPen);
+			painter.setBrush(QColor(0, 0, 0, opacity_ * 255 / 100));
+			for (const Band &band : bands) {
+				painter.setOpacity(band.opacity);
+				painter.drawRoundedRect(band.rect, kBandRadius, kBandRadius);
+			}
+			painter.setOpacity(1.0);
+			painter.setRenderHint(QPainter::Antialiasing, false);
+		}
 		for (const QPoint &offset : kOutline)
 			painter.drawImage(offset, outlineLayer_);
 		painter.drawImage(0, 0, textLayer_);
@@ -347,7 +390,7 @@ void DanmakuOverlay::render()
 	// Sleep until the oldest line starts fading, then step the fade at the normal repaint rate.
 	if (fadeMs_ > 0 && !lines_.empty()) {
 		const qint64 untilFade = lines_.front().arrivedMs + fadeMs_ - now;
-		fadeTimer_.start(static_cast<int>(qMax<qint64>(untilFade, kRepaintMs)));
+		fadeTimer_.start(static_cast<int>(qMax<qint64>(untilFade, kFadeStepMs)));
 	}
 }
 
