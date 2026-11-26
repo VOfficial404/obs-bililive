@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [0.9.0]
+
+### 新增
+
+- 弹幕悬浮窗改成游戏聊天框的样式：每条一行，显示为「(房管) (舰长) 名字: 内容」，每行垫一条和文字等宽的半透明底条。同一个观众的名字颜色固定，主播是粉色；礼物、醒目留言和上舰也显示成单行。
+- 在面板里发的弹幕会立刻出现在面板和悬浮窗里，不用等 B 站推回来；B 站推回的那条会自动跳过，发送失败时文字会填回输入框。
+
+### 变更
+
+- 「背景不透明度」现在调的是每行底条的深浅；锁定后悬浮窗本身完全透明，只剩底条和文字。
+
+### 性能
+
+- 弹幕更接近实时：悬浮窗收到弹幕后立即绘制，不再固定等 100 毫秒，刷屏时最多每秒绘制 30 次；面板列表里安静一阵后来的第一条也立即显示，只有刷屏时才合并刷新。淡出动画仍为每秒 10 帧。
+
 ## [0.8.1]
 
 ### 安全
@@ -170,7 +185,8 @@
 - 在面板里发送弹幕。
 - 简体中文和英文界面。
 
-[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.8.1...HEAD
+[Unreleased]: https://github.com/VOfficial404/obs-bililive/compare/0.9.0...HEAD
+[0.9.0]: https://github.com/VOfficial404/obs-bililive/compare/0.8.1...0.9.0
 [0.8.1]: https://github.com/VOfficial404/obs-bililive/compare/0.8.0...0.8.1
 [0.8.0]: https://github.com/VOfficial404/obs-bililive/compare/0.7.1...0.8.0
 [0.7.1]: https://github.com/VOfficial404/obs-bililive/compare/0.7.0...0.7.1
